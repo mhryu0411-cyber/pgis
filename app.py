@@ -284,6 +284,16 @@ ROAD_SUMMARIES = [
 
 TYPE_BY_ID = {item["id"]: item for item in REPORT_TYPES}
 VEHICLE_BY_ID = {item["id"]: item for item in VEHICLE_TYPES}
+TOURIST_PRIORITY = {
+    "blocked": 0,
+    "snow_heavy": 1,
+    "blackice": 2,
+    "chain": 3,
+    "suv_only": 4,
+    "snow_light": 5,
+    "photo": 6,
+    "cleared": 7,
+}
 
 
 def init_state() -> None:
@@ -688,6 +698,119 @@ def css() -> None:
             margin-top: 0.25rem;
         }
 
+        .tourist-banner {
+            display: grid;
+            grid-template-columns: 2.4rem minmax(0, 1fr);
+            gap: 0.74rem;
+            align-items: start;
+            margin: 0.72rem 0 0.8rem;
+            padding: 0.82rem 0.92rem;
+            border: 1px solid var(--border);
+            border-left: 4px solid #3b82f6;
+            border-radius: 12px;
+            background: var(--panel);
+            box-shadow: 0 14px 36px var(--shadow);
+        }
+
+        .tourist-banner-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.25rem;
+            height: 2.25rem;
+            border-radius: 10px;
+            background: rgba(59, 130, 246, 0.16);
+            color: #3b82f6;
+            font-size: 1.18rem;
+            font-weight: 900;
+        }
+
+        .tourist-banner-title {
+            color: var(--text-strong);
+            font-size: 0.94rem;
+            font-weight: 900;
+            line-height: 1.3;
+            margin-bottom: 0.18rem;
+        }
+
+        .tourist-banner-desc {
+            color: var(--muted);
+            font-size: 0.78rem;
+            line-height: 1.55;
+        }
+
+        .tourist-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.42rem;
+            margin-top: 0.62rem;
+        }
+
+        .tourist-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.28rem;
+            padding: 0.24rem 0.48rem;
+            border-radius: 999px;
+            background: var(--panel-soft);
+            border: 1px solid var(--border-soft);
+            color: var(--text);
+            font-size: 0.7rem;
+            font-weight: 800;
+        }
+
+        .tourist-guide {
+            margin-bottom: 0.72rem;
+            padding: 0.84rem;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+        }
+
+        .tourist-guide-title {
+            color: var(--text-strong);
+            font-size: 0.92rem;
+            font-weight: 900;
+            line-height: 1.3;
+            margin-bottom: 0.34rem;
+        }
+
+        .tourist-guide-copy {
+            color: var(--muted);
+            font-size: 0.76rem;
+            line-height: 1.55;
+            margin-bottom: 0.7rem;
+        }
+
+        .tourist-guide-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.46rem;
+        }
+
+        .tourist-guide-item {
+            min-width: 0;
+            padding: 0.52rem;
+            border-radius: 10px;
+            background: var(--panel-soft);
+            border: 1px solid var(--border-soft);
+        }
+
+        .tourist-guide-item strong {
+            display: block;
+            color: var(--text-strong);
+            font-size: 0.76rem;
+            line-height: 1.2;
+            margin-bottom: 0.2rem;
+        }
+
+        .tourist-guide-item span {
+            display: block;
+            color: var(--muted);
+            font-size: 0.68rem;
+            line-height: 1.4;
+        }
+
         .legend {
             display: flex;
             flex-wrap: wrap;
@@ -812,6 +935,7 @@ def css() -> None:
         @media (max-width: 900px) {
             .block-container { padding: 0.6rem; }
             .legend-item { min-width: 6.2rem; }
+            .tourist-guide-grid { grid-template-columns: 1fr; }
             iframe { border-radius: 10px; }
         }
         </style>
@@ -832,6 +956,42 @@ def count_by_type(reports: list[dict[str, Any]], type_id: str) -> int:
     return sum(1 for report in reports if report["type"] == type_id)
 
 
+def report_time_minutes(report: dict[str, Any]) -> int:
+    try:
+        hour, minute = str(report.get("time", "00:00")).split(":", maxsplit=1)
+        return int(hour) * 60 + int(minute)
+    except ValueError:
+        return 0
+
+
+def tourist_sorted_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        reports,
+        key=lambda report: (
+            TOURIST_PRIORITY.get(str(report.get("type")), 99),
+            -int(bool(report.get("verified"))),
+            -int(report.get("confirms", 0)),
+            -report_time_minutes(report),
+        ),
+    )
+
+
+def tourist_summary_counts(reports: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "risk": sum(
+            1
+            for report in reports
+            if int(TYPE_BY_ID.get(report["type"], {}).get("urgency", 0)) >= 2
+        ),
+        "restriction": sum(
+            1
+            for report in reports
+            if report["type"] in {"blocked", "chain", "suv_only"}
+        ),
+        "cleared": count_by_type(reports, "cleared"),
+    }
+
+
 def open_sidebar() -> None:
     components.html(
         """
@@ -849,6 +1009,61 @@ def open_sidebar() -> None:
         </script>
         """,
         height=0,
+    )
+
+
+def render_tourist_banner(reports: list[dict[str, Any]]) -> None:
+    counts = tourist_summary_counts(reports)
+    st.markdown(
+        f"""
+        <div class="tourist-banner">
+            <div class="tourist-banner-icon">i</div>
+            <div>
+                <div class="tourist-banner-title">관광객 모드가 켜져 있습니다</div>
+                <div class="tourist-banner-desc">
+                    제주 지리에 익숙하지 않은 운전자를 위한 보기입니다.
+                    지도를 한라산 중산간·주요 산간도로 쪽으로 확대하고,
+                    오른쪽 제보 목록은 통제·폭설·블랙아이스·체인 필요 정보를 먼저 보여줍니다.
+                </div>
+                <div class="tourist-chips">
+                    <span class="tourist-chip">위험·주의 {counts["risk"]}건</span>
+                    <span class="tourist-chip">통제·체인·SUV 제한 {counts["restriction"]}건</span>
+                    <span class="tourist-chip">제설 완료 {counts["cleared"]}건</span>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_tourist_guide(reports: list[dict[str, Any]]) -> None:
+    counts = tourist_summary_counts(reports)
+    st.markdown(
+        f"""
+        <div class="tourist-guide">
+            <div class="tourist-guide-title">관광객 모드 요약</div>
+            <div class="tourist-guide-copy">
+                초행길·렌터카 운전자 기준으로 “지금 피해야 할 길”을 먼저 보도록 정리합니다.
+                현재 표시된 제보 중 위험·주의 제보는 {counts["risk"]}건입니다.
+            </div>
+            <div class="tourist-guide-grid">
+                <div class="tourist-guide-item">
+                    <strong>지도 확대</strong>
+                    <span>한라산 중산간과 1100·5.16 도로권을 먼저 봅니다.</span>
+                </div>
+                <div class="tourist-guide-item">
+                    <strong>우선순위</strong>
+                    <span>통제, 폭설, 블랙아이스, 체인 필요 순으로 정렬합니다.</span>
+                </div>
+                <div class="tourist-guide-item">
+                    <strong>판단 기준</strong>
+                    <span>승용차·렌터카는 체인/SUV 제한 제보를 특히 확인하세요.</span>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -1218,6 +1433,10 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
                     <p class="small-muted">시민이 직접 현장 경험을 바탕으로 도로 상태 정보를 제보하고, 이를 GIS 지도 위에 시각화하는 참여형 지리정보시스템입니다.</p>
                 </div>
                 <div class="pgis-card">
+                    <b>🗺️ 관광객 모드란?</b>
+                    <p class="small-muted">제주 도로에 익숙하지 않은 방문자를 위한 보기입니다. 산간도로 중심으로 지도를 확대하고, 통제·폭설·블랙아이스·체인 필요처럼 초행 운전자가 먼저 확인해야 할 제보를 우선 정리합니다.</p>
+                </div>
+                <div class="pgis-card">
                     <b>🖤 블랙아이스란?</b>
                     <p class="small-muted">도로 표면에 얇은 얼음층이 형성되어 육안으로 식별이 거의 불가능한 상태입니다. CCTV나 기상관측으로도 파악이 어려워 시민 제보가 유일한 해법입니다.</p>
                 </div>
@@ -1414,23 +1633,38 @@ def render_report_form() -> None:
 
 
 def render_idle_panel(reports: list[dict[str, Any]]) -> None:
+    tourist_mode = st.session_state.tourist_mode
+    status_copy = (
+        "관광객 모드는 산간도로 위험 제보를 먼저 보여줍니다. 마커를 누르면 상세 정보가 열립니다."
+        if tourist_mode
+        else "마커를 선택하면 상세 정보가 열립니다. 빈 지점을 클릭하면 새 제보를 등록할 수 있습니다."
+    )
     st.markdown(
-        """
+        f"""
         <div class="pgis-card">
             <h3 style="margin:0 0 .45rem;color:var(--text-strong);">지도 상태</h3>
-            <p class="small-muted">마커를 선택하면 상세 정보가 열립니다. 빈 지점을 클릭하면 새 제보를 등록할 수 있습니다.</p>
+            <p class="small-muted">{status_copy}</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
+    if tourist_mode:
+        render_tourist_guide(reports)
+
     st.markdown(
-        '<div class="pgis-section-label">최근 제보</div>',
+        (
+            '<div class="pgis-section-label">관광객 우선 체크</div>'
+            if tourist_mode
+            else '<div class="pgis-section-label">최근 제보</div>'
+        ),
         unsafe_allow_html=True,
     )
-    for report in reports[:6]:
+    panel_reports = tourist_sorted_reports(reports) if tourist_mode else reports
+    for report in panel_reports[:6]:
         type_info = TYPE_BY_ID[report["type"]]
-        label = f'{type_info["icon"]} {type_info["label"]} · {report["time"]}'
+        prefix = "우선 " if tourist_mode and TOURIST_PRIORITY.get(report["type"], 99) <= 4 else ""
+        label = f'{type_info["icon"]} {prefix}{type_info["label"]} · {report["time"]}'
         if st.button(label, key=f"recent_{report['id']}", use_container_width=True):
             select_report(report["id"])
             st.rerun()
@@ -1457,7 +1691,7 @@ def main() -> None:
 
     with main_col:
         restore_col, tourist_col, theme_col, note_col = st.columns(
-            [0.16, 0.2, 0.28, 0.36]
+            [0.16, 0.24, 0.28, 0.32]
         )
         with restore_col:
             if st.button(
@@ -1468,7 +1702,11 @@ def main() -> None:
             ):
                 open_sidebar()
         with tourist_col:
-            st.toggle("🗺️ 관광객", key="tourist_mode")
+            st.toggle(
+                "🗺️ 관광객 모드",
+                key="tourist_mode",
+                help="초행길·렌터카 운전자 기준으로 산간도로 위험 제보를 먼저 정리합니다.",
+            )
         with theme_col:
             st.radio(
                 "화면 테마",
@@ -1483,6 +1721,9 @@ def main() -> None:
                 '<div class="map-note">지도를 클릭하여 제보하기</div>',
                 unsafe_allow_html=True,
             )
+
+        if st.session_state.tourist_mode:
+            render_tourist_banner(reports)
 
         fmap = build_map(reports)
         map_data = st_folium(
