@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime
 from html import escape
 from math import hypot
+from textwrap import dedent
 from typing import Any
 
 import folium
@@ -282,6 +283,81 @@ ROAD_SUMMARIES = [
     },
 ]
 
+ROAD_LINES = [
+    {
+        "name": "1100도로",
+        "aliases": ["1100", "어승생악", "윗세오름"],
+        "coords": [
+            [33.488, 126.486],
+            [33.448, 126.475],
+            [33.414, 126.428],
+            [33.378, 126.477],
+            [33.350, 126.525],
+            [33.315, 126.515],
+        ],
+    },
+    {
+        "name": "5·16도로",
+        "aliases": ["5·16", "5.16", "516"],
+        "coords": [
+            [33.498, 126.535],
+            [33.455, 126.548],
+            [33.410, 126.565],
+            [33.370, 126.620],
+            [33.318, 126.583],
+            [33.262, 126.560],
+        ],
+    },
+    {
+        "name": "남조로",
+        "aliases": ["남조로"],
+        "coords": [
+            [33.455, 126.565],
+            [33.420, 126.625],
+            [33.382, 126.682],
+            [33.342, 126.730],
+            [33.300, 126.775],
+        ],
+    },
+    {
+        "name": "제주시 시내",
+        "aliases": ["제주시", "연동", "노형"],
+        "coords": [
+            [33.500, 126.480],
+            [33.505, 126.525],
+            [33.500, 126.570],
+        ],
+    },
+    {
+        "name": "서귀포 시내",
+        "aliases": ["서귀포", "중문", "하원"],
+        "coords": [
+            [33.250, 126.430],
+            [33.253, 126.510],
+            [33.255, 126.575],
+        ],
+    },
+    {
+        "name": "해안도로(동)",
+        "aliases": ["해안도로", "성산", "조천", "함덕"],
+        "coords": [
+            [33.535, 126.635],
+            [33.540, 126.750],
+            [33.515, 126.850],
+            [33.460, 126.930],
+        ],
+    },
+    {
+        "name": "한림 중산간",
+        "aliases": ["한림", "중산간"],
+        "coords": [
+            [33.405, 126.300],
+            [33.430, 126.350],
+            [33.445, 126.410],
+        ],
+    },
+]
+
 TYPE_BY_ID = {item["id"]: item for item in REPORT_TYPES}
 VEHICLE_BY_ID = {item["id"]: item for item in VEHICLE_TYPES}
 TOURIST_PRIORITY = {
@@ -294,6 +370,8 @@ TOURIST_PRIORITY = {
     "photo": 6,
     "cleared": 7,
 }
+
+ROAD_BY_NAME = {road["name"]: road for road in ROAD_LINES}
 
 
 def init_state() -> None:
@@ -831,6 +909,14 @@ def css() -> None:
             min-width: 7rem;
         }
 
+        .legend-line {
+            width: 1.35rem;
+            height: 0.25rem;
+            border-radius: 999px;
+            background: var(--line);
+            box-shadow: 0 0 0 1px var(--border-soft);
+        }
+
         .detail-head {
             display: flex;
             align-items: center;
@@ -956,6 +1042,10 @@ def count_by_type(reports: list[dict[str, Any]], type_id: str) -> int:
     return sum(1 for report in reports if report["type"] == type_id)
 
 
+def clean_html(markup: str) -> str:
+    return dedent(markup).strip()
+
+
 def report_time_minutes(report: dict[str, Any]) -> int:
     try:
         hour, minute = str(report.get("time", "00:00")).split(":", maxsplit=1)
@@ -992,6 +1082,126 @@ def tourist_summary_counts(reports: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def normalize_text(value: str) -> str:
+    return value.lower().replace(" ", "").replace(".", "").replace("·", "")
+
+
+def point_to_segment_distance(
+    point: tuple[float, float], start: list[float], end: list[float]
+) -> float:
+    px, py = point
+    ax, ay = start
+    bx, by = end
+    dx = bx - ax
+    dy = by - ay
+    if dx == 0 and dy == 0:
+        return hypot(px - ax, py - ay)
+    t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+    nearest_x = ax + t * dx
+    nearest_y = ay + t * dy
+    return hypot(px - nearest_x, py - nearest_y)
+
+
+def distance_to_road(report: dict[str, Any], road: dict[str, Any]) -> float:
+    point = (float(report["lat"]), float(report["lng"]))
+    coords = road["coords"]
+    return min(
+        point_to_segment_distance(point, coords[idx], coords[idx + 1])
+        for idx in range(len(coords) - 1)
+    )
+
+
+def report_matches_road(report: dict[str, Any], road: dict[str, Any]) -> bool:
+    comment = normalize_text(str(report.get("comment", "")))
+    if any(normalize_text(alias) in comment for alias in road["aliases"]):
+        return True
+    return distance_to_road(report, road) <= 0.035
+
+
+def associated_road_name(report: dict[str, Any]) -> str | None:
+    comment = normalize_text(str(report.get("comment", "")))
+    for road in ROAD_LINES:
+        if any(normalize_text(alias) in comment for alias in road["aliases"]):
+            return str(road["name"])
+
+    nearest = min(
+        ((distance_to_road(report, road), str(road["name"])) for road in ROAD_LINES),
+        key=lambda item: item[0],
+    )
+    if nearest[0] <= 0.035:
+        return nearest[1]
+    return None
+
+
+def reports_for_road(
+    road: dict[str, Any], reports: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    return [
+        report for report in reports if associated_road_name(report) == road["name"]
+    ]
+
+
+def road_status(road_reports: list[dict[str, Any]]) -> dict[str, str | int]:
+    if not road_reports:
+        return {
+            "status": "양호",
+            "color": "#22c55e",
+            "desc": "표시 중인 위험 제보 없음",
+            "count": 0,
+        }
+
+    max_urgency = max(
+        int(TYPE_BY_ID.get(report["type"], {}).get("urgency", 0))
+        for report in road_reports
+    )
+    top_report = max(
+        road_reports,
+        key=lambda report: (
+            int(TYPE_BY_ID.get(report["type"], {}).get("urgency", 0)),
+            int(report.get("confirms", 0)),
+            report_time_minutes(report),
+        ),
+    )
+    type_info = TYPE_BY_ID.get(top_report["type"], {})
+
+    if max_urgency >= 3:
+        status = "위험"
+        color = "#ef4444"
+    elif max_urgency == 2:
+        status = "주의"
+        color = "#f59e0b"
+    elif max_urgency == 1:
+        status = "확인"
+        color = "#8b5cf6"
+    else:
+        status = "양호"
+        color = "#22c55e"
+
+    return {
+        "status": status,
+        "color": color,
+        "desc": f'{type_info.get("label", "제보")} {len(road_reports)}건 · 최근 {top_report.get("time", "-")}',
+        "count": len(road_reports),
+    }
+
+
+def road_summaries_from_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summaries = []
+    for road in ROAD_LINES:
+        status = road_status(reports_for_road(road, reports))
+        summaries.append(
+            {
+                "name": road["name"],
+                "status": str(status["status"]),
+                "color": str(status["color"]),
+                "desc": str(status["desc"]),
+                "count": int(status["count"]),
+            }
+        )
+    return summaries
+
+
 def open_sidebar() -> None:
     components.html(
         """
@@ -1015,7 +1225,8 @@ def open_sidebar() -> None:
 def render_tourist_banner(reports: list[dict[str, Any]]) -> None:
     counts = tourist_summary_counts(reports)
     st.markdown(
-        f"""
+        clean_html(
+            f"""
         <div class="tourist-banner">
             <div class="tourist-banner-icon">i</div>
             <div>
@@ -1032,7 +1243,8 @@ def render_tourist_banner(reports: list[dict[str, Any]]) -> None:
                 </div>
             </div>
         </div>
-        """,
+        """
+        ),
         unsafe_allow_html=True,
     )
 
@@ -1040,7 +1252,8 @@ def render_tourist_banner(reports: list[dict[str, Any]]) -> None:
 def render_tourist_guide(reports: list[dict[str, Any]]) -> None:
     counts = tourist_summary_counts(reports)
     st.markdown(
-        f"""
+        clean_html(
+            f"""
         <div class="tourist-guide">
             <div class="tourist-guide-title">관광객 모드 요약</div>
             <div class="tourist-guide-copy">
@@ -1062,14 +1275,16 @@ def render_tourist_guide(reports: list[dict[str, Any]]) -> None:
                 </div>
             </div>
         </div>
-        """,
+        """
+        ),
         unsafe_allow_html=True,
     )
 
 
 def road_card(road: dict[str, str]) -> str:
     color = road["color"]
-    return f"""
+    return clean_html(
+        f"""
     <div class="pgis-card-soft">
         <div class="road-row">
             <span class="road-name">{escape(road["name"])}</span>
@@ -1080,6 +1295,7 @@ def road_card(road: dict[str, str]) -> str:
         <div class="road-desc">{escape(road["desc"])}</div>
     </div>
     """
+    )
 
 
 def type_overview(reports: list[dict[str, Any]]) -> str:
@@ -1118,7 +1334,8 @@ def type_overview(reports: list[dict[str, Any]]) -> str:
         ttl = "해소 전까지" if item.get("ttl") is None else f'{item["ttl"]}시간'
         level = level_by_urgency[int(item["urgency"])]
         rows.append(
-            f"""
+            clean_html(
+                f"""
             <div class="type-row" style="--accent:{item["color"]};--tint:{item["color"]}22;--bar:{bar}%;">
                 <div class="type-icon">{item["icon"]}</div>
                 <div>
@@ -1134,9 +1351,11 @@ def type_overview(reports: list[dict[str, Any]]) -> str:
                 </div>
             </div>
             """
+            )
         )
 
-    return f"""
+    return clean_html(
+        f"""
     <div class="type-dashboard">
         <div class="type-summary">
             <div class="type-metric">
@@ -1162,23 +1381,25 @@ def type_overview(reports: list[dict[str, Any]]) -> str:
         <div class="type-list">{"".join(rows)}</div>
     </div>
     """
+    )
 
 
 def marker_html(type_info: dict[str, Any], verified: bool) -> str:
+    border = "#ffffff" if st.session_state.theme_mode == "dark" else "#0f172a"
     glow = (
-        "0 0 0 3px rgba(34,197,94,0.3), 0 2px 8px rgba(0,0,0,0.35)"
+        "0 0 0 4px rgba(34,197,94,0.28), 0 2px 8px rgba(0,0,0,0.28)"
         if verified
-        else "0 2px 8px rgba(0,0,0,0.35)"
+        else "0 2px 8px rgba(0,0,0,0.24)"
     )
-    return f"""
+    return clean_html(
+        f"""
     <div style="
-        display:flex;align-items:center;justify-content:center;
-        width:36px;height:36px;border-radius:50%;
-        background:white;border:2px solid {type_info["color"]};
-        box-shadow:{glow};font-size:20px;cursor:pointer;">
-        {type_info["icon"]}
+        width:16px;height:16px;border-radius:50%;
+        background:{type_info["color"]};border:2px solid {border};
+        box-shadow:{glow};cursor:pointer;">
     </div>
     """
+    )
 
 
 def build_map(reports: list[dict[str, Any]]) -> folium.Map:
@@ -1218,6 +1439,33 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
         tooltip="한라산 중산간 지역",
     ).add_to(fmap)
 
+    road_summaries = road_summaries_from_reports(reports)
+    for summary in road_summaries:
+        road = ROAD_BY_NAME.get(summary["name"])
+        if not road:
+            continue
+
+        color = str(summary["color"])
+        weight = 8 if summary["status"] == "위험" else 6
+        tooltip = (
+            f'{summary["name"]} · {summary["status"]}'
+            f' · 제보 {summary["count"]}건'
+        )
+        folium.PolyLine(
+            locations=road["coords"],
+            color="#0f172a" if is_light else "#ffffff",
+            weight=weight + 4,
+            opacity=0.22 if is_light else 0.16,
+            tooltip=tooltip,
+        ).add_to(fmap)
+        folium.PolyLine(
+            locations=road["coords"],
+            color=color,
+            weight=weight,
+            opacity=0.88,
+            tooltip=tooltip,
+        ).add_to(fmap)
+
     for report in reports:
         type_info = TYPE_BY_ID.get(report["type"])
         if not type_info:
@@ -1228,8 +1476,8 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
             tooltip=f'{type_info["icon"]} {type_info["label"]}',
             icon=folium.DivIcon(
                 html=marker_html(type_info, bool(report.get("verified"))),
-                icon_size=(36, 36),
-                icon_anchor=(18, 18),
+                icon_size=(20, 20),
+                icon_anchor=(10, 10),
                 class_name="custom-marker",
             ),
         ).add_to(fmap)
@@ -1331,6 +1579,10 @@ def close_panel() -> None:
     st.session_state.reporting_location = None
 
 
+def set_theme_mode(mode: str) -> None:
+    st.session_state.theme_mode = mode
+
+
 def submit_report() -> None:
     form = st.session_state.report_form
     location = st.session_state.reporting_location
@@ -1368,7 +1620,8 @@ def submit_report() -> None:
 def render_sidebar(reports: list[dict[str, Any]]) -> None:
     with st.sidebar:
         st.markdown(
-            f"""
+            clean_html(
+                f"""
             <div class="pgis-title"><span>🏔️</span><h1>제주 겨울도로</h1></div>
             <div class="pgis-subtitle">체감 안전지도 · PGIS</div>
             <div class="pgis-live">
@@ -1376,6 +1629,7 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
                 <span>실시간 운영중 · 제보 {len(reports)}건</span>
             </div>
             """,
+            ),
             unsafe_allow_html=True,
         )
 
@@ -1386,7 +1640,7 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
                 '<div class="pgis-section-label">주요 도로 구간</div>',
                 unsafe_allow_html=True,
             )
-            for road in ROAD_SUMMARIES:
+            for road in road_summaries_from_reports(reports):
                 st.markdown(road_card(road), unsafe_allow_html=True)
 
             st.markdown(
@@ -1427,7 +1681,8 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
 
         with info_tab:
             st.markdown(
-                """
+                clean_html(
+                    """
                 <div class="pgis-card">
                     <b>📌 참여형 GIS (PGIS)란?</b>
                     <p class="small-muted">시민이 직접 현장 경험을 바탕으로 도로 상태 정보를 제보하고, 이를 GIS 지도 위에 시각화하는 참여형 지리정보시스템입니다.</p>
@@ -1453,22 +1708,32 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
                     <p class="small-muted">🌱 새내기 0~9건<br>⭐ 숙련 제보자 10~49건<br>🏆 전문 제보자 50건 이상</p>
                 </div>
                 """,
+                ),
                 unsafe_allow_html=True,
             )
 
 
 def render_legend() -> None:
-    items = []
+    items = [
+        '<span class="legend-item"><span class="legend-line" style="--line:#ef4444;"></span><span>도로 위험</span></span>',
+        '<span class="legend-item"><span class="legend-line" style="--line:#f59e0b;"></span><span>도로 주의</span></span>',
+        '<span class="legend-item"><span class="legend-line" style="--line:#22c55e;"></span><span>도로 양호</span></span>',
+    ]
     for item in REPORT_TYPES:
         items.append(
-            f"""
+            clean_html(
+                f"""
             <span class="legend-item">
                 <span>{item["icon"]}</span>
                 <span>{escape(item["label"])}</span>
             </span>
             """
+            )
         )
-    st.markdown(f'<div class="legend">{"".join(items)}</div>', unsafe_allow_html=True)
+    st.markdown(
+        clean_html(f'<div class="legend">{"".join(items)}</div>'),
+        unsafe_allow_html=True,
+    )
 
 
 def render_report_detail(report: dict[str, Any]) -> None:
@@ -1487,7 +1752,8 @@ def render_report_detail(report: dict[str, Any]) -> None:
     )
 
     st.markdown(
-        f"""
+        clean_html(
+            f"""
         <div class="pgis-card" style="--accent:{type_info["color"]};">
             <div class="detail-head">
                 <div class="detail-icon">{type_info["icon"]}</div>
@@ -1509,6 +1775,7 @@ def render_report_detail(report: dict[str, Any]) -> None:
             {ttl}
         </div>
         """,
+        ),
         unsafe_allow_html=True,
     )
 
@@ -1539,7 +1806,8 @@ def render_report_form() -> None:
     step = st.session_state.report_step
     form = st.session_state.report_form
     st.markdown(
-        f"""
+        clean_html(
+            f"""
         <div class="pgis-card">
             <h3 style="margin:0 0 0.55rem;color:var(--text-strong);">📍 새 제보 등록</h3>
             <div class="form-location">
@@ -1547,6 +1815,7 @@ def render_report_form() -> None:
             </div>
         </div>
         """,
+        ),
         unsafe_allow_html=True,
     )
     st.progress(step / 3)
@@ -1640,12 +1909,14 @@ def render_idle_panel(reports: list[dict[str, Any]]) -> None:
         else "마커를 선택하면 상세 정보가 열립니다. 빈 지점을 클릭하면 새 제보를 등록할 수 있습니다."
     )
     st.markdown(
-        f"""
+        clean_html(
+            f"""
         <div class="pgis-card">
             <h3 style="margin:0 0 .45rem;color:var(--text-strong);">지도 상태</h3>
             <p class="small-muted">{status_copy}</p>
         </div>
         """,
+        ),
         unsafe_allow_html=True,
     )
 
@@ -1690,8 +1961,8 @@ def main() -> None:
     main_col, panel_col = st.columns([0.72, 0.28], gap="medium")
 
     with main_col:
-        restore_col, tourist_col, theme_col, note_col = st.columns(
-            [0.16, 0.24, 0.28, 0.32]
+        restore_col, tourist_col, note_col, moon_col, sun_col = st.columns(
+            [0.16, 0.25, 0.43, 0.08, 0.08]
         )
         with restore_col:
             if st.button(
@@ -1707,19 +1978,30 @@ def main() -> None:
                 key="tourist_mode",
                 help="초행길·렌터카 운전자 기준으로 산간도로 위험 제보를 먼저 정리합니다.",
             )
-        with theme_col:
-            st.radio(
-                "화면 테마",
-                options=["dark", "light"],
-                format_func=lambda mode: "🌙 다크" if mode == "dark" else "☀️ 라이트",
-                horizontal=True,
-                key="theme_mode",
-                label_visibility="collapsed",
-            )
         with note_col:
             st.markdown(
                 '<div class="map-note">지도를 클릭하여 제보하기</div>',
                 unsafe_allow_html=True,
+            )
+        with moon_col:
+            st.button(
+                "🌙",
+                key="theme_dark_button",
+                type="primary" if st.session_state.theme_mode == "dark" else "secondary",
+                use_container_width=True,
+                help="다크모드",
+                on_click=set_theme_mode,
+                args=("dark",),
+            )
+        with sun_col:
+            st.button(
+                "☀️",
+                key="theme_light_button",
+                type="primary" if st.session_state.theme_mode == "light" else "secondary",
+                use_container_width=True,
+                help="라이트모드",
+                on_click=set_theme_mode,
+                args=("light",),
             )
 
         if st.session_state.tourist_mode:
