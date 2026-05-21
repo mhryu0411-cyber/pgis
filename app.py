@@ -8,6 +8,7 @@ from typing import Any
 
 import folium
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_folium import st_folium
 
 
@@ -290,6 +291,7 @@ def init_state() -> None:
         "reports": deepcopy(SAMPLE_REPORTS),
         "active_filters": [item["id"] for item in REPORT_TYPES],
         "tourist_mode": False,
+        "theme_mode": "dark",
         "selected_report_id": None,
         "reporting_location": None,
         "report_step": 1,
@@ -307,30 +309,92 @@ def init_state() -> None:
 
 
 def css() -> None:
+    is_light = st.session_state.theme_mode == "light"
+    colors = {
+        "scheme": "light" if is_light else "dark",
+        "app_bg": "#f8fafc" if is_light else "#020617",
+        "sidebar_bg": "rgba(255, 255, 255, 0.98)" if is_light else "rgba(15, 23, 42, 0.98)",
+        "text": "#1e293b" if is_light else "#e2e8f0",
+        "text_strong": "#0f172a" if is_light else "#ffffff",
+        "muted": "#64748b" if is_light else "#94a3b8",
+        "panel": "rgba(255, 255, 255, 0.92)" if is_light else "rgba(15, 23, 42, 0.82)",
+        "panel_soft": "rgba(241, 245, 249, 0.9)" if is_light else "rgba(30, 41, 59, 0.58)",
+        "panel_hover": "rgba(226, 232, 240, 0.96)" if is_light else "rgba(30, 41, 59, 0.78)",
+        "panel_solid": "#f1f5f9" if is_light else "#1e293b",
+        "panel_alt": "rgba(241, 245, 249, 0.9)" if is_light else "rgba(30, 41, 59, 0.72)",
+        "border": "rgba(148, 163, 184, 0.48)" if is_light else "rgba(51, 65, 85, 0.72)",
+        "border_soft": "rgba(203, 213, 225, 0.9)" if is_light else "rgba(51, 65, 85, 0.5)",
+        "border_strong": "rgba(148, 163, 184, 0.86)" if is_light else "rgba(71, 85, 105, 0.85)",
+        "shadow": "rgba(15, 23, 42, 0.16)" if is_light else "rgba(2, 6, 23, 0.45)",
+        "button_bg": "rgba(241, 245, 249, 0.95)" if is_light else "rgba(30, 41, 59, 0.72)",
+        "button_hover": "rgba(226, 232, 240, 0.95)" if is_light else "rgba(51, 65, 85, 0.85)",
+        "input_bg": "#ffffff" if is_light else "#1e293b",
+        "input_text": "#0f172a" if is_light else "#f8fafc",
+        "input_border": "#cbd5e1" if is_light else "#334155",
+    }
+    theme_css = f"""
+        :root {{
+            color-scheme: {colors["scheme"]};
+            --app-bg: {colors["app_bg"]};
+            --sidebar-bg: {colors["sidebar_bg"]};
+            --text: {colors["text"]};
+            --text-strong: {colors["text_strong"]};
+            --muted: {colors["muted"]};
+            --panel: {colors["panel"]};
+            --panel-soft: {colors["panel_soft"]};
+            --panel-hover: {colors["panel_hover"]};
+            --panel-solid: {colors["panel_solid"]};
+            --panel-alt: {colors["panel_alt"]};
+            --border: {colors["border"]};
+            --border-soft: {colors["border_soft"]};
+            --border-strong: {colors["border_strong"]};
+            --shadow: {colors["shadow"]};
+            --button-bg: {colors["button_bg"]};
+            --button-hover: {colors["button_hover"]};
+            --input-bg: {colors["input_bg"]};
+            --input-text: {colors["input_text"]};
+            --input-border: {colors["input_border"]};
+        }}
+    """
     st.markdown(
         """
         <style>
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 
-        :root { color-scheme: dark; }
+        __THEME_CSS__
 
         .stApp {
-            background: #020617;
-            color: #f8fafc;
+            background: var(--app-bg);
+            color: var(--text);
             font-family: Pretendard, -apple-system, BlinkMacSystemFont, sans-serif;
         }
 
-        [data-testid="stHeader"],
-        [data-testid="stToolbar"],
         #MainMenu,
         footer { visibility: hidden; height: 0; }
 
-        [data-testid="stSidebar"] {
-            background: rgba(15, 23, 42, 0.98);
-            border-right: 1px solid rgba(51, 65, 85, 0.7);
+        [data-testid="stHeader"] {
+            background: transparent;
         }
 
-        [data-testid="stSidebar"] * { color: #e2e8f0; }
+        [data-testid="stToolbar"] {
+            background: transparent;
+        }
+
+        [data-testid="stExpandSidebarButton"] {
+            width: 2.35rem;
+            height: 2.35rem;
+            border: 1px solid var(--border-strong);
+            border-radius: 10px;
+            background: var(--panel);
+            box-shadow: 0 8px 24px var(--shadow);
+        }
+
+        [data-testid="stSidebar"] {
+            background: var(--sidebar-bg);
+            border-right: 1px solid var(--border);
+        }
+
+        [data-testid="stSidebar"] * { color: var(--text); }
 
         .block-container {
             max-width: 100%;
@@ -340,14 +404,14 @@ def css() -> None:
         h1, h2, h3, p { letter-spacing: 0; }
 
         div[data-testid="stVerticalBlockBorderWrapper"] {
-            border-color: rgba(51, 65, 85, 0.7);
-            background: rgba(15, 23, 42, 0.72);
+            border-color: var(--border);
+            background: var(--panel);
         }
 
         iframe {
             border-radius: 14px;
-            border: 1px solid rgba(51, 65, 85, 0.8);
-            box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+            border: 1px solid var(--border-strong);
+            box-shadow: 0 24px 60px var(--shadow);
         }
 
         .pgis-title {
@@ -363,11 +427,11 @@ def css() -> None:
             font-size: 1.2rem;
             line-height: 1.2;
             margin: 0;
-            color: #fff;
+            color: var(--text-strong);
         }
 
         .pgis-subtitle {
-            color: #94a3b8;
+            color: var(--muted);
             font-size: 0.78rem;
             margin-bottom: 0.8rem;
         }
@@ -378,8 +442,8 @@ def css() -> None:
             gap: 0.45rem;
             padding: 0.5rem 0.6rem;
             border-radius: 0.6rem;
-            background: #1e293b;
-            color: #cbd5e1;
+            background: var(--panel-solid);
+            color: var(--text);
             font-size: 0.78rem;
         }
 
@@ -399,26 +463,26 @@ def css() -> None:
         }
 
         .pgis-card {
-            background: rgba(15, 23, 42, 0.82);
-            border: 1px solid rgba(51, 65, 85, 0.72);
+            background: var(--panel);
+            border: 1px solid var(--border);
             border-radius: 12px;
             padding: 0.86rem;
             margin-bottom: 0.72rem;
-            color: #e2e8f0;
+            color: var(--text);
         }
 
         .pgis-card-soft {
-            background: rgba(30, 41, 59, 0.58);
-            border: 1px solid rgba(51, 65, 85, 0.5);
+            background: var(--panel-soft);
+            border: 1px solid var(--border-soft);
             border-radius: 10px;
             padding: 0.78rem;
             margin-bottom: 0.55rem;
         }
 
-        .pgis-card-soft:hover { background: rgba(30, 41, 59, 0.78); }
+        .pgis-card-soft:hover { background: var(--panel-hover); }
 
         .pgis-section-label {
-            color: #94a3b8;
+            color: var(--muted);
             font-size: 0.72rem;
             font-weight: 700;
             letter-spacing: 0.06em;
@@ -435,7 +499,7 @@ def css() -> None:
         }
 
         .road-name {
-            color: #fff;
+            color: var(--text-strong);
             font-size: 0.88rem;
             font-weight: 700;
         }
@@ -449,7 +513,7 @@ def css() -> None:
 
         .road-desc,
         .small-muted {
-            color: #94a3b8;
+            color: var(--muted);
             font-size: 0.75rem;
             line-height: 1.55;
         }
@@ -468,21 +532,21 @@ def css() -> None:
 
         .type-metric {
             min-width: 0;
-            background: rgba(30, 41, 59, 0.7);
-            border: 1px solid rgba(71, 85, 105, 0.55);
+            background: var(--panel-soft);
+            border: 1px solid var(--border-soft);
             border-radius: 9px;
             padding: 0.52rem 0.45rem;
         }
 
         .type-metric-value {
-            color: #fff;
+            color: var(--text-strong);
             font-size: 1.05rem;
             font-weight: 900;
             line-height: 1;
         }
 
         .type-metric-label {
-            color: #94a3b8;
+            color: var(--muted);
             font-size: 0.68rem;
             line-height: 1.2;
             margin-top: 0.28rem;
@@ -496,19 +560,19 @@ def css() -> None:
             gap: 0.55rem;
             padding: 0.58rem 0.64rem;
             border-radius: 10px;
-            background: rgba(30, 41, 59, 0.58);
-            border: 1px solid rgba(71, 85, 105, 0.46);
+            background: var(--panel-soft);
+            border: 1px solid var(--border-soft);
         }
 
         .type-focus-text {
-            color: #cbd5e1;
+            color: var(--text);
             font-size: 0.74rem;
             line-height: 1.35;
         }
 
         .type-focus strong {
             display: block;
-            color: #fff;
+            color: var(--text-strong);
             font-size: 0.84rem;
             margin-bottom: 0.08rem;
         }
@@ -534,10 +598,10 @@ def css() -> None:
             gap: 0.55rem;
             align-items: center;
             padding: 0.58rem;
-            border: 1px solid rgba(51, 65, 85, 0.62);
+            border: 1px solid var(--border);
             border-left: 3px solid var(--accent);
             border-radius: 10px;
-            background: rgba(30, 41, 59, 0.48);
+            background: var(--panel-soft);
         }
 
         .type-icon {
@@ -561,7 +625,7 @@ def css() -> None:
         }
 
         .type-name {
-            color: #f8fafc;
+            color: var(--text-strong);
             font-size: 0.79rem;
             font-weight: 800;
             line-height: 1.2;
@@ -572,7 +636,7 @@ def css() -> None:
 
         .type-count {
             flex: 0 0 auto;
-            color: #fff;
+            color: var(--text-strong);
             font-size: 0.83rem;
             font-weight: 900;
         }
@@ -582,7 +646,7 @@ def css() -> None:
             align-items: center;
             gap: 0.36rem;
             margin-top: 0.22rem;
-            color: #94a3b8;
+            color: var(--muted);
             font-size: 0.68rem;
             line-height: 1.2;
         }
@@ -601,7 +665,7 @@ def css() -> None:
             margin-top: 0.42rem;
             overflow: hidden;
             border-radius: 999px;
-            background: rgba(71, 85, 105, 0.45);
+            background: var(--border-soft);
         }
 
         .type-bar span {
@@ -617,9 +681,9 @@ def css() -> None:
             align-items: center;
             padding: 0.55rem 0.9rem;
             border-radius: 999px;
-            background: rgba(15, 23, 42, 0.82);
-            border: 1px solid rgba(51, 65, 85, 0.8);
-            color: #cbd5e1;
+            background: var(--panel);
+            border: 1px solid var(--border-strong);
+            color: var(--text);
             font-size: 0.84rem;
             margin-top: 0.25rem;
         }
@@ -630,16 +694,16 @@ def css() -> None:
             gap: 0.5rem;
             margin-top: 0.7rem;
             padding: 0.8rem;
-            border: 1px solid rgba(51, 65, 85, 0.65);
+            border: 1px solid var(--border);
             border-radius: 12px;
-            background: rgba(15, 23, 42, 0.75);
+            background: var(--panel);
         }
 
         .legend-item {
             display: inline-flex;
             align-items: center;
             gap: 0.35rem;
-            color: #cbd5e1;
+            color: var(--text);
             font-size: 0.74rem;
             min-width: 7rem;
         }
@@ -656,7 +720,7 @@ def css() -> None:
         .detail-icon { font-size: 2rem; }
 
         .detail-title {
-            color: #fff;
+            color: var(--text-strong);
             font-weight: 900;
             line-height: 1.2;
         }
@@ -671,13 +735,13 @@ def css() -> None:
         }
 
         .detail-meta {
-            color: #94a3b8;
+            color: var(--muted);
             font-size: 0.74rem;
             margin-top: 0.15rem;
         }
 
         .detail-comment {
-            color: #f8fafc;
+            color: var(--text-strong);
             font-size: 0.95rem;
             line-height: 1.55;
             margin: 0 0 0.85rem;
@@ -687,14 +751,14 @@ def css() -> None:
             display: flex;
             gap: 0.7rem;
             flex-wrap: wrap;
-            color: #94a3b8;
+            color: var(--muted);
             font-size: 0.75rem;
             margin-bottom: 0.75rem;
         }
 
         .ttl {
-            background: rgba(30, 41, 59, 0.72);
-            color: #94a3b8;
+            background: var(--panel-alt);
+            color: var(--muted);
             border-radius: 10px;
             padding: 0.62rem 0.74rem;
             font-size: 0.75rem;
@@ -702,24 +766,24 @@ def css() -> None:
         }
 
         .form-location {
-            color: #94a3b8;
+            color: var(--muted);
             font-size: 0.78rem;
             margin: -0.35rem 0 0.85rem;
         }
 
         .stButton > button {
             border-radius: 10px;
-            border: 1px solid rgba(71, 85, 105, 0.85);
-            background: rgba(30, 41, 59, 0.72);
-            color: #f8fafc;
+            border: 1px solid var(--border-strong);
+            background: var(--button-bg);
+            color: var(--text-strong);
             min-height: 2.45rem;
             transition: all 0.15s ease;
         }
 
         .stButton > button:hover {
             border-color: #64748b;
-            background: rgba(51, 65, 85, 0.85);
-            color: #fff;
+            background: var(--button-hover);
+            color: var(--text-strong);
         }
 
         .stButton > button[kind="primary"] {
@@ -732,10 +796,17 @@ def css() -> None:
         .stProgress > div > div > div > div { background-color: #3b82f6; }
         .stTextInput input,
         .stTextArea textarea {
-            background: #1e293b;
-            color: #f8fafc;
-            border: 1px solid #334155;
+            background: var(--input-bg);
+            color: var(--input-text);
+            border: 1px solid var(--input-border);
             border-radius: 10px;
+        }
+
+        .stRadio label,
+        .stRadio div,
+        .stToggle label,
+        .stToggle div {
+            color: var(--text);
         }
 
         @media (max-width: 900px) {
@@ -744,7 +815,7 @@ def css() -> None:
             iframe { border-radius: 10px; }
         }
         </style>
-        """,
+        """.replace("__THEME_CSS__", theme_css),
         unsafe_allow_html=True,
     )
 
@@ -759,6 +830,26 @@ def filtered_reports() -> list[dict[str, Any]]:
 
 def count_by_type(reports: list[dict[str, Any]], type_id: str) -> int:
     return sum(1 for report in reports if report["type"] == type_id)
+
+
+def open_sidebar() -> None:
+    components.html(
+        """
+        <script>
+        const openSidebar = () => {
+            const doc = window.parent.document;
+            const button = doc.querySelector('[data-testid="stExpandSidebarButton"]');
+            if (button) {
+                button.click();
+            }
+        };
+        window.setTimeout(openSidebar, 50);
+        window.setTimeout(openSidebar, 250);
+        window.setTimeout(openSidebar, 800);
+        </script>
+        """,
+        height=0,
+    )
 
 
 def road_card(road: dict[str, str]) -> str:
@@ -878,6 +969,11 @@ def marker_html(type_info: dict[str, Any], verified: bool) -> str:
 def build_map(reports: list[dict[str, Any]]) -> folium.Map:
     center = [33.38, 126.53] if st.session_state.tourist_mode else [33.38, 126.55]
     zoom = 12 if st.session_state.tourist_mode else 11
+    is_light = st.session_state.theme_mode == "light"
+    tile_style = "light_all" if is_light else "dark_all"
+    tile_name = "CARTO Light" if is_light else "CARTO Dark"
+    region_fill = "#60a5fa" if is_light else "#1e40af"
+    region_opacity = 0.09 if is_light else 0.05
 
     fmap = folium.Map(
         location=center,
@@ -888,9 +984,9 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
         prefer_canvas=True,
     )
     folium.TileLayer(
-        tiles="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+        tiles=f"https://{{s}}.basemaps.cartocdn.com/{tile_style}/{{z}}/{{x}}/{{y}}{{r}}.png",
         attr='&copy; <a href="https://carto.com/">CARTO</a>',
-        name="CARTO Dark",
+        name=tile_name,
         max_zoom=19,
         control=False,
     ).add_to(fmap)
@@ -900,8 +996,8 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
         radius=8000,
         color="#3b82f6",
         fill=True,
-        fill_color="#1e40af",
-        fill_opacity=0.05,
+        fill_color=region_fill,
+        fill_opacity=region_opacity,
         weight=1,
         dash_array="8 4",
         tooltip="한라산 중산간 지역",
@@ -1226,7 +1322,7 @@ def render_report_form() -> None:
     st.markdown(
         f"""
         <div class="pgis-card">
-            <h3 style="margin:0 0 0.55rem;color:#fff;">📍 새 제보 등록</h3>
+            <h3 style="margin:0 0 0.55rem;color:var(--text-strong);">📍 새 제보 등록</h3>
             <div class="form-location">
                 위치: {location["lat"]:.4f}, {location["lng"]:.4f}
             </div>
@@ -1321,7 +1417,7 @@ def render_idle_panel(reports: list[dict[str, Any]]) -> None:
     st.markdown(
         """
         <div class="pgis-card">
-            <h3 style="margin:0 0 .45rem;color:#fff;">지도 상태</h3>
+            <h3 style="margin:0 0 .45rem;color:var(--text-strong);">지도 상태</h3>
             <p class="small-muted">마커를 선택하면 상세 정보가 열립니다. 빈 지점을 클릭하면 새 제보를 등록할 수 있습니다.</p>
         </div>
         """,
@@ -1360,10 +1456,29 @@ def main() -> None:
     main_col, panel_col = st.columns([0.72, 0.28], gap="medium")
 
     with main_col:
-        toolbar_left, toolbar_right = st.columns([0.28, 0.72])
-        with toolbar_left:
-            st.toggle("🗺️ 관광객 모드", key="tourist_mode")
-        with toolbar_right:
+        restore_col, tourist_col, theme_col, note_col = st.columns(
+            [0.16, 0.2, 0.28, 0.36]
+        )
+        with restore_col:
+            if st.button(
+                "☰ 사이드바",
+                key="open_sidebar_button",
+                use_container_width=True,
+                help="왼쪽 바가 접혔을 때 다시 엽니다.",
+            ):
+                open_sidebar()
+        with tourist_col:
+            st.toggle("🗺️ 관광객", key="tourist_mode")
+        with theme_col:
+            st.radio(
+                "화면 테마",
+                options=["dark", "light"],
+                format_func=lambda mode: "🌙 다크" if mode == "dark" else "☀️ 라이트",
+                horizontal=True,
+                key="theme_mode",
+                label_visibility="collapsed",
+            )
+        with note_col:
             st.markdown(
                 '<div class="map-note">지도를 클릭하여 제보하기</div>',
                 unsafe_allow_html=True,
@@ -1375,7 +1490,7 @@ def main() -> None:
             height=720,
             use_container_width=True,
             returned_objects=["last_clicked", "last_object_clicked"],
-            key="pgis_map",
+            key=f"pgis_map_{st.session_state.theme_mode}",
         )
         handle_map_event(map_data, reports)
         render_legend()
