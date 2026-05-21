@@ -454,30 +454,162 @@ def css() -> None:
             line-height: 1.55;
         }
 
-        .type-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.5rem;
-        }
-
-        .type-pill {
+        .type-dashboard {
             display: flex;
+            flex-direction: column;
+            gap: 0.62rem;
+        }
+
+        .type-summary {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 0.45rem;
-            align-items: center;
-            background: rgba(30, 41, 59, 0.58);
-            border-radius: 10px;
-            padding: 0.55rem 0.6rem;
         }
 
-        .type-pill .label {
-            color: #cbd5e1;
-            font-size: 0.72rem;
-            line-height: 1.2;
+        .type-metric {
+            min-width: 0;
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid rgba(71, 85, 105, 0.55);
+            border-radius: 9px;
+            padding: 0.52rem 0.45rem;
         }
 
-        .type-pill .count {
+        .type-metric-value {
+            color: #fff;
+            font-size: 1.05rem;
             font-weight: 900;
+            line-height: 1;
+        }
+
+        .type-metric-label {
+            color: #94a3b8;
+            font-size: 0.68rem;
             line-height: 1.2;
+            margin-top: 0.28rem;
+            white-space: nowrap;
+        }
+
+        .type-focus {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.55rem;
+            padding: 0.58rem 0.64rem;
+            border-radius: 10px;
+            background: rgba(30, 41, 59, 0.58);
+            border: 1px solid rgba(71, 85, 105, 0.46);
+        }
+
+        .type-focus-text {
+            color: #cbd5e1;
+            font-size: 0.74rem;
+            line-height: 1.35;
+        }
+
+        .type-focus strong {
+            display: block;
+            color: #fff;
+            font-size: 0.84rem;
+            margin-bottom: 0.08rem;
+        }
+
+        .type-focus-badge {
+            flex: 0 0 auto;
+            border-radius: 999px;
+            padding: 0.16rem 0.48rem;
+            color: #fff;
+            font-size: 0.7rem;
+            font-weight: 900;
+        }
+
+        .type-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.46rem;
+        }
+
+        .type-row {
+            display: grid;
+            grid-template-columns: 2.15rem minmax(0, 1fr);
+            gap: 0.55rem;
+            align-items: center;
+            padding: 0.58rem;
+            border: 1px solid rgba(51, 65, 85, 0.62);
+            border-left: 3px solid var(--accent);
+            border-radius: 10px;
+            background: rgba(30, 41, 59, 0.48);
+        }
+
+        .type-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.05rem;
+            height: 2.05rem;
+            border-radius: 9px;
+            background: var(--tint);
+            border: 1px solid var(--accent);
+            font-size: 1.06rem;
+        }
+
+        .type-row-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            min-width: 0;
+        }
+
+        .type-name {
+            color: #f8fafc;
+            font-size: 0.79rem;
+            font-weight: 800;
+            line-height: 1.2;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .type-count {
+            flex: 0 0 auto;
+            color: #fff;
+            font-size: 0.83rem;
+            font-weight: 900;
+        }
+
+        .type-meta {
+            display: flex;
+            align-items: center;
+            gap: 0.36rem;
+            margin-top: 0.22rem;
+            color: #94a3b8;
+            font-size: 0.68rem;
+            line-height: 1.2;
+        }
+
+        .type-level {
+            border-radius: 999px;
+            padding: 0.08rem 0.36rem;
+            background: var(--tint);
+            color: var(--accent);
+            font-weight: 900;
+        }
+
+        .type-bar {
+            width: 100%;
+            height: 0.28rem;
+            margin-top: 0.42rem;
+            overflow: hidden;
+            border-radius: 999px;
+            background: rgba(71, 85, 105, 0.45);
+        }
+
+        .type-bar span {
+            display: block;
+            width: var(--bar);
+            height: 100%;
+            border-radius: inherit;
+            background: var(--accent);
         }
 
         .map-note {
@@ -640,6 +772,88 @@ def road_card(road: dict[str, str]) -> str:
             </span>
         </div>
         <div class="road-desc">{escape(road["desc"])}</div>
+    </div>
+    """
+
+
+def type_overview(reports: list[dict[str, Any]]) -> str:
+    counts = {item["id"]: count_by_type(reports, item["id"]) for item in REPORT_TYPES}
+    total = len(reports)
+    high_risk = sum(
+        counts[item["id"]] for item in REPORT_TYPES if int(item["urgency"]) >= 2
+    )
+    verified = sum(1 for report in reports if report.get("verified"))
+    verified_rate = round((verified / total) * 100) if total else 0
+
+    sorted_types = sorted(
+        REPORT_TYPES,
+        key=lambda item: (-counts[item["id"]], -int(item["urgency"]), item["label"]),
+    )
+    max_count = max(counts.values(), default=1) or 1
+    level_by_urgency = {3: "위험", 2: "주의", 1: "참고", 0: "안전"}
+
+    top_type = sorted_types[0]
+    top_count = counts[top_type["id"]]
+    if top_count:
+        focus_title = f'{top_type["icon"]} {escape(top_type["label"])}'
+        focus_text = f'표시 중 {top_count}건 · {escape(top_type["desc"])}'
+        focus_badge = level_by_urgency[int(top_type["urgency"])]
+        focus_color = top_type["color"]
+    else:
+        focus_title = "표시 중 제보 없음"
+        focus_text = "현재 조건에 해당하는 현장 제보가 없습니다."
+        focus_badge = "대기"
+        focus_color = "#64748b"
+
+    rows = []
+    for item in sorted_types:
+        count = counts[item["id"]]
+        bar = round((count / max_count) * 100) if count else 0
+        ttl = "해소 전까지" if item.get("ttl") is None else f'{item["ttl"]}시간'
+        level = level_by_urgency[int(item["urgency"])]
+        rows.append(
+            f"""
+            <div class="type-row" style="--accent:{item["color"]};--tint:{item["color"]}22;--bar:{bar}%;">
+                <div class="type-icon">{item["icon"]}</div>
+                <div>
+                    <div class="type-row-head">
+                        <span class="type-name">{escape(item["label"])}</span>
+                        <span class="type-count">{count}</span>
+                    </div>
+                    <div class="type-meta">
+                        <span class="type-level">{level}</span>
+                        <span>유효 {ttl}</span>
+                    </div>
+                    <div class="type-bar"><span></span></div>
+                </div>
+            </div>
+            """
+        )
+
+    return f"""
+    <div class="type-dashboard">
+        <div class="type-summary">
+            <div class="type-metric">
+                <div class="type-metric-value">{total}</div>
+                <div class="type-metric-label">전체</div>
+            </div>
+            <div class="type-metric">
+                <div class="type-metric-value">{high_risk}</div>
+                <div class="type-metric-label">위험·주의</div>
+            </div>
+            <div class="type-metric">
+                <div class="type-metric-value">{verified_rate}%</div>
+                <div class="type-metric-label">검증률</div>
+            </div>
+        </div>
+        <div class="type-focus">
+            <div class="type-focus-text">
+                <strong>{focus_title}</strong>
+                <span>{focus_text}</span>
+            </div>
+            <span class="type-focus-badge" style="background:{focus_color};">{focus_badge}</span>
+        </div>
+        <div class="type-list">{"".join(rows)}</div>
     </div>
     """
 
@@ -864,24 +1078,9 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
             for road in ROAD_SUMMARIES:
                 st.markdown(road_card(road), unsafe_allow_html=True)
 
-            type_cards = []
-            for item in REPORT_TYPES:
-                type_cards.append(
-                    f"""
-                    <div class="type-pill">
-                        <span>{item["icon"]}</span>
-                        <div>
-                            <div class="label">{escape(item["label"])}</div>
-                            <div class="count" style="color:{item["color"]};">
-                                {count_by_type(reports, item["id"])}
-                            </div>
-                        </div>
-                    </div>
-                    """
-                )
             st.markdown(
                 '<div class="pgis-section-label">제보 유형별 현황</div>'
-                f'<div class="type-grid">{"".join(type_cards)}</div>',
+                f"{type_overview(reports)}",
                 unsafe_allow_html=True,
             )
 
