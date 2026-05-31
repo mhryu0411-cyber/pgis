@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime
 from html import escape
 from math import hypot
+from textwrap import dedent
 from typing import Any
 
 import folium
@@ -793,6 +794,16 @@ def css() -> None:
             padding: 0.18rem 0.45rem;
         }}
 
+        .type-empty {{
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+            color: var(--muted);
+            font-size: 0.76rem;
+            line-height: 1.45;
+            padding: 0.58rem;
+            background: var(--panel-soft);
+        }}
+
         .detail-head {{
             display: grid;
             grid-template-columns: 2.8rem minmax(0, 1fr);
@@ -869,6 +880,145 @@ def css() -> None:
             margin-top: 0.65rem;
         }}
 
+        .timeline-help {{
+            color: var(--muted);
+            font-size: 0.72rem;
+            line-height: 1.35;
+            margin: -0.24rem 0 0.7rem;
+        }}
+
+        .timeline-item {{
+            display: grid;
+            grid-template-columns: 4.2rem 1rem minmax(0, 1fr);
+            gap: 0.52rem;
+            margin-bottom: 0.62rem;
+        }}
+
+        .timeline-time {{
+            color: var(--text-strong);
+            font-size: 0.77rem;
+            font-weight: 950;
+            line-height: 1.2;
+            text-align: right;
+            padding-top: 0.16rem;
+        }}
+
+        .timeline-time span {{
+            display: block;
+            color: var(--muted);
+            font-size: 0.66rem;
+            font-weight: 800;
+            margin-top: 0.12rem;
+        }}
+
+        .timeline-rail {{
+            position: relative;
+            display: flex;
+            justify-content: center;
+            padding-top: 0.34rem;
+        }}
+
+        .timeline-rail::after {{
+            content: "";
+            position: absolute;
+            top: 1.18rem;
+            bottom: -0.9rem;
+            width: 2px;
+            border-radius: 999px;
+            background: var(--border-soft);
+        }}
+
+        .timeline-item.is-last .timeline-rail::after {{
+            display: none;
+        }}
+
+        .timeline-dot {{
+            position: relative;
+            z-index: 1;
+            width: 0.72rem;
+            height: 0.72rem;
+            border-radius: 999px;
+            border: 2px solid var(--panel);
+            background: var(--accent);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+        }}
+
+        .timeline-card {{
+            min-width: 0;
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--accent);
+            border-radius: 8px;
+            background: var(--panel);
+            padding: 0.58rem 0.62rem;
+        }}
+
+        .timeline-title {{
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: var(--text-strong);
+            font-size: 0.86rem;
+            font-weight: 950;
+            line-height: 1.28;
+        }}
+
+        .timeline-meta {{
+            color: var(--muted);
+            font-size: 0.72rem;
+            line-height: 1.35;
+            margin-top: 0.12rem;
+        }}
+
+        .timeline-comment {{
+            color: var(--text);
+            font-size: 0.78rem;
+            line-height: 1.45;
+            margin-top: 0.42rem;
+        }}
+
+        .timeline-badges {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.28rem;
+            margin-top: 0.48rem;
+        }}
+
+        .timeline-badge {{
+            border: 1px solid var(--border-soft);
+            border-radius: 999px;
+            background: var(--panel-soft);
+            color: var(--text);
+            font-size: 0.67rem;
+            font-weight: 900;
+            line-height: 1;
+            padding: 0.22rem 0.42rem;
+            white-space: nowrap;
+        }}
+
+        .timeline-badge.danger {{
+            border-color: #fecaca;
+            background: #fef2f2;
+            color: #991b1b;
+        }}
+
+        .timeline-badge.caution {{
+            border-color: #fed7aa;
+            background: #fff7ed;
+            color: #9a3412;
+        }}
+
+        .timeline-badge.clear {{
+            border-color: #bbf7d0;
+            background: #f0fdf4;
+            color: #166534;
+        }}
+
+        .timeline-badge.neutral {{
+            border-color: #ddd6fe;
+            background: #f5f3ff;
+            color: #5b21b6;
+        }}
+
         .form-location {{
             border: 1px solid #bfdbfe;
             border-radius: 8px;
@@ -937,7 +1087,7 @@ def css() -> None:
 
 
 def clean_html(markup: str) -> str:
-    return markup.strip()
+    return dedent(markup).strip()
 
 
 def sync_active_filters() -> None:
@@ -979,6 +1129,40 @@ def tourist_sorted_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]
             -int(report.get("confirms", 0)),
         ),
     )
+
+
+def recent_sorted_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        reports,
+        key=lambda report: (
+            report_age_minutes(report),
+            -int(report.get("confirms", 0)),
+            TOURIST_PRIORITY.get(report["type"], 99),
+        ),
+    )
+
+
+def relative_time_label(report: dict[str, Any]) -> str:
+    age = report_age_minutes(report)
+    if age <= 0:
+        return "방금 전"
+    if age < 60:
+        return f"{age}분 전"
+    if age < 24 * 60:
+        hours, minutes = divmod(age, 60)
+        return f"{hours}시간 전" if minutes == 0 else f"{hours}시간 {minutes}분 전"
+    return "시간 확인 필요"
+
+
+def urgency_badge(type_info: dict[str, Any]) -> tuple[str, str]:
+    urgency = int(type_info.get("urgency", 0))
+    if type_info["id"] == "cleared":
+        return "clear", "양호"
+    if urgency >= 3:
+        return "danger", "긴급"
+    if urgency >= 2:
+        return "caution", "주의"
+    return "neutral", "참고"
 
 
 def tourist_summary_counts(reports: list[dict[str, Any]]) -> dict[str, int]:
@@ -1226,7 +1410,10 @@ def type_overview(reports: list[dict[str, Any]]) -> str:
         counts[item["id"]] for item in REPORT_TYPES if int(item["urgency"]) >= 2
     )
     verified_count = sum(1 for report in reports if report.get("verified"))
-    top_types = sorted(REPORT_TYPES, key=lambda item: counts[item["id"]], reverse=True)[:5]
+    top_types = sorted(
+        [item for item in REPORT_TYPES if counts[item["id"]] > 0],
+        key=lambda item: (-counts[item["id"]], -int(item["urgency"]), item["label"]),
+    )[:5]
     rows = []
     for item in top_types:
         rows.append(
@@ -1238,6 +1425,8 @@ def type_overview(reports: list[dict[str, Any]]) -> str:
             </div>
             """
         )
+    if not rows:
+        rows.append('<div class="type-empty">표시 중인 제보 유형이 없습니다.</div>')
 
     return clean_html(
         f"""
@@ -1256,6 +1445,55 @@ def type_overview(reports: list[dict[str, Any]]) -> str:
             </div>
         </div>
         {"".join(rows)}
+        """
+    )
+
+
+def timeline_card(report: dict[str, Any], is_last: bool) -> str:
+    type_info = TYPE_BY_ID[report["type"]]
+    road_name = associated_road_name(report) or "제주 도로"
+    vehicle = VEHICLE_BY_ID.get(report.get("vehicle"), {})
+    badge_class, badge_text = urgency_badge(type_info)
+    verified_badge = (
+        '<span class="timeline-badge clear">검증됨</span>' if report.get("verified") else ""
+    )
+    snow_badge = (
+        f'<span class="timeline-badge neutral">눈 {escape(str(report["snow"]))}</span>'
+        if report.get("snow")
+        else ""
+    )
+    last_class = " is-last" if is_last else ""
+
+    return clean_html(
+        f"""
+        <div class="timeline-item{last_class}" style="--accent:{type_info["color"]};">
+            <div class="timeline-time">
+                {escape(str(report["time"]))}
+                <span>{relative_time_label(report)}</span>
+            </div>
+            <div class="timeline-rail"><span class="timeline-dot"></span></div>
+            <div class="timeline-card">
+                <div class="timeline-title">
+                    <span>{type_info["icon"]}</span>
+                    <span>{escape(type_info["label"])}</span>
+                </div>
+                <div class="timeline-meta">
+                    {escape(road_name)} · {escape(str(report["reporter"]))}
+                </div>
+                <div class="timeline-comment">
+                    {escape(str(report["comment"]))}
+                </div>
+                <div class="timeline-badges">
+                    <span class="timeline-badge {badge_class}">{badge_text}</span>
+                    <span class="timeline-badge">확인 {report["confirms"]}명</span>
+                    <span class="timeline-badge">
+                        {vehicle.get("icon", "")} {escape(vehicle.get("label", "차량 정보 없음"))}
+                    </span>
+                    {verified_badge}
+                    {snow_badge}
+                </div>
+            </div>
+        </div>
         """
     )
 
@@ -1293,8 +1531,12 @@ def render_sidebar() -> None:
                 st.markdown(road_card(road), unsafe_allow_html=True)
 
             st.markdown(
-                '<div class="section-label">제보 유형 요약</div>'
-                f"{type_overview(reports)}",
+                clean_html(
+                    f"""
+                    <div class="section-label">제보 유형 요약</div>
+                    {type_overview(reports)}
+                    """
+                ),
                 unsafe_allow_html=True,
             )
 
@@ -1831,18 +2073,27 @@ def render_idle_panel(reports: list[dict[str, Any]]) -> None:
         render_tourist_guide(reports)
 
     st.markdown(
-        '<div class="section-label">최근 제보</div>',
+        clean_html(
+            """
+            <div class="section-label">최근 제보 타임라인</div>
+            <div class="timeline-help">최신 제보가 위에 오도록 시간순으로 정렬했습니다.</div>
+            """
+        ),
         unsafe_allow_html=True,
     )
-    panel_reports = tourist_sorted_reports(reports) if st.session_state.tourist_mode else reports
+    panel_reports = recent_sorted_reports(reports)
     if not panel_reports:
         st.info("현재 필터 조건에 맞는 제보가 없습니다.")
         return
 
-    for report in panel_reports[:7]:
+    visible_reports = panel_reports[:7]
+    for idx, report in enumerate(visible_reports):
         type_info = TYPE_BY_ID[report["type"]]
-        road_name = associated_road_name(report) or "제주 도로"
-        label = f'{type_info["icon"]} {type_info["label"]} · {road_name} · {report["time"]}'
+        st.markdown(
+            timeline_card(report, idx == len(visible_reports) - 1),
+            unsafe_allow_html=True,
+        )
+        label = f'{type_info["icon"]} {report["time"]} 제보 상세 보기'
         if st.button(label, key=f"recent_{report['id']}", use_container_width=True):
             select_report(report["id"])
             st.rerun()
