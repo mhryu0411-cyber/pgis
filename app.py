@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta
 from html import escape
-from math import hypot
+from math import cos, hypot, radians
 from textwrap import dedent
 from typing import Any
 
@@ -287,72 +287,117 @@ ROAD_LINES = [
     {
         "name": "1100도로",
         "aliases": ["1100", "어승생악", "윗세오름"],
+        "base_weight": 9,
         "coords": [
+            [33.500, 126.492],
             [33.488, 126.486],
+            [33.472, 126.480],
+            [33.458, 126.477],
             [33.448, 126.475],
+            [33.435, 126.462],
+            [33.424, 126.446],
             [33.414, 126.428],
+            [33.401, 126.421],
+            [33.389, 126.427],
             [33.378, 126.477],
+            [33.364, 126.495],
             [33.350, 126.525],
+            [33.335, 126.524],
             [33.315, 126.515],
         ],
     },
     {
         "name": "5·16도로",
         "aliases": ["5·16", "5.16", "516"],
+        "base_weight": 9,
         "coords": [
             [33.498, 126.535],
+            [33.482, 126.539],
+            [33.466, 126.544],
             [33.455, 126.548],
+            [33.438, 126.556],
             [33.410, 126.565],
+            [33.397, 126.581],
+            [33.383, 126.601],
             [33.370, 126.620],
+            [33.352, 126.619],
+            [33.333, 126.606],
             [33.318, 126.583],
+            [33.298, 126.573],
+            [33.278, 126.565],
             [33.262, 126.560],
         ],
     },
     {
         "name": "남조로",
         "aliases": ["남조로"],
+        "base_weight": 8,
         "coords": [
             [33.455, 126.565],
+            [33.443, 126.584],
             [33.420, 126.625],
+            [33.402, 126.652],
             [33.382, 126.682],
+            [33.366, 126.704],
             [33.342, 126.730],
+            [33.323, 126.750],
             [33.300, 126.775],
         ],
     },
     {
         "name": "제주시 시내",
         "aliases": ["제주시", "연동", "노형"],
+        "base_weight": 7,
         "coords": [
+            [33.498, 126.465],
             [33.500, 126.480],
+            [33.500, 126.502],
             [33.505, 126.525],
+            [33.506, 126.548],
             [33.500, 126.570],
+            [33.497, 126.588],
         ],
     },
     {
         "name": "서귀포 시내",
         "aliases": ["서귀포", "중문", "하원"],
+        "base_weight": 7,
         "coords": [
+            [33.251, 126.405],
             [33.250, 126.430],
+            [33.250, 126.462],
+            [33.252, 126.488],
             [33.253, 126.510],
+            [33.254, 126.538],
             [33.255, 126.575],
         ],
     },
     {
         "name": "해안도로(동)",
         "aliases": ["해안도로", "성산", "조천", "함덕"],
+        "base_weight": 8,
         "coords": [
             [33.535, 126.635],
+            [33.544, 126.668],
+            [33.552, 126.706],
             [33.540, 126.750],
+            [33.534, 126.792],
             [33.515, 126.850],
+            [33.495, 126.886],
             [33.460, 126.930],
         ],
     },
     {
         "name": "한림 중산간",
         "aliases": ["한림", "중산간"],
+        "base_weight": 6,
         "coords": [
+            [33.390, 126.280],
+            [33.398, 126.302],
             [33.405, 126.300],
+            [33.414, 126.323],
             [33.430, 126.350],
+            [33.438, 126.382],
             [33.445, 126.410],
         ],
     },
@@ -373,6 +418,17 @@ TOURIST_PRIORITY = {
 
 ROAD_BY_NAME = {road["name"]: road for road in ROAD_LINES}
 CONFIRM_COOLDOWN_HOURS = 4
+ROAD_MATCH_THRESHOLD_KM = 3.5
+IMPACT_RADIUS_BY_TYPE = {
+    "blocked": 2.4,
+    "snow_heavy": 2.2,
+    "blackice": 1.6,
+    "chain": 1.5,
+    "suv_only": 1.5,
+    "snow_light": 1.0,
+    "photo": 0.8,
+    "cleared": 1.8,
+}
 
 
 def init_state() -> None:
@@ -1284,6 +1340,86 @@ def point_to_segment_distance(
     return hypot(px - nearest_x, py - nearest_y)
 
 
+def point_distance_km(start: list[float], end: list[float]) -> float:
+    lat1, lng1 = float(start[0]), float(start[1])
+    lat2, lng2 = float(end[0]), float(end[1])
+    avg_lat = radians((lat1 + lat2) / 2)
+    dy = (lat2 - lat1) * 111.32
+    dx = (lng2 - lng1) * 111.32 * cos(avg_lat)
+    return hypot(dx, dy)
+
+
+def project_point_to_segment(
+    point: list[float], start: list[float], end: list[float]
+) -> tuple[list[float], float]:
+    px, py = point
+    ax, ay = start
+    bx, by = end
+    dx = bx - ax
+    dy = by - ay
+    if dx == 0 and dy == 0:
+        return [ax, ay], 0.0
+
+    t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+    return [ax + t * dx, ay + t * dy], t
+
+
+def road_cumulative_lengths(coords: list[list[float]]) -> list[float]:
+    lengths = [0.0]
+    for idx in range(len(coords) - 1):
+        lengths.append(lengths[-1] + point_distance_km(coords[idx], coords[idx + 1]))
+    return lengths
+
+
+def projection_on_road(report: dict[str, Any], road: dict[str, Any]) -> dict[str, Any]:
+    point = [float(report["lat"]), float(report["lng"])]
+    coords = road["coords"]
+    cumulative = road_cumulative_lengths(coords)
+    best: dict[str, Any] | None = None
+
+    for idx in range(len(coords) - 1):
+        projected, ratio = project_point_to_segment(point, coords[idx], coords[idx + 1])
+        distance_km = point_distance_km(point, projected)
+        position_km = cumulative[idx] + point_distance_km(coords[idx], projected)
+        candidate = {
+            "road": road,
+            "point": projected,
+            "segment_index": idx,
+            "segment_ratio": ratio,
+            "distance_km": distance_km,
+            "position_km": position_km,
+        }
+        if best is None or distance_km < float(best["distance_km"]):
+            best = candidate
+
+    return best or {
+        "road": road,
+        "point": point,
+        "segment_index": 0,
+        "segment_ratio": 0.0,
+        "distance_km": 0.0,
+        "position_km": 0.0,
+    }
+
+
+def best_road_projection(report: dict[str, Any]) -> dict[str, Any] | None:
+    comment = normalize_text(str(report.get("comment", "")))
+    alias_matches = [
+        road
+        for road in ROAD_LINES
+        if any(normalize_text(alias) in comment for alias in road["aliases"])
+    ]
+    candidate_roads = alias_matches or ROAD_LINES
+    best = min(
+        (projection_on_road(report, road) for road in candidate_roads),
+        key=lambda item: float(item["distance_km"]),
+    )
+    if alias_matches or float(best["distance_km"]) <= ROAD_MATCH_THRESHOLD_KM:
+        return best
+    return None
+
+
 def distance_to_road(report: dict[str, Any], road: dict[str, Any]) -> float:
     point = (float(report["lat"]), float(report["lng"]))
     coords = road["coords"]
@@ -1301,18 +1437,82 @@ def report_matches_road(report: dict[str, Any], road: dict[str, Any]) -> bool:
 
 
 def associated_road_name(report: dict[str, Any]) -> str | None:
-    comment = normalize_text(str(report.get("comment", "")))
-    for road in ROAD_LINES:
-        if any(normalize_text(alias) in comment for alias in road["aliases"]):
-            return str(road["name"])
+    projection = best_road_projection(report)
+    if not projection:
+        return None
+    return str(projection["road"]["name"])
 
-    nearest = min(
-        ((distance_to_road(report, road), str(road["name"])) for road in ROAD_LINES),
-        key=lambda item: item[0],
-    )
-    if nearest[0] <= 0.035:
-        return nearest[1]
-    return None
+
+def interpolate_point(start: list[float], end: list[float], ratio: float) -> list[float]:
+    return [
+        start[0] + (end[0] - start[0]) * ratio,
+        start[1] + (end[1] - start[1]) * ratio,
+    ]
+
+
+def point_at_road_distance(
+    coords: list[list[float]], cumulative: list[float], distance_km: float
+) -> list[float]:
+    if distance_km <= 0:
+        return coords[0]
+    if distance_km >= cumulative[-1]:
+        return coords[-1]
+
+    for idx in range(len(coords) - 1):
+        start_distance = cumulative[idx]
+        end_distance = cumulative[idx + 1]
+        if start_distance <= distance_km <= end_distance:
+            segment_length = end_distance - start_distance
+            ratio = 0.0 if segment_length == 0 else (distance_km - start_distance) / segment_length
+            return interpolate_point(coords[idx], coords[idx + 1], ratio)
+
+    return coords[-1]
+
+
+def road_subline(
+    coords: list[list[float]], center_km: float, radius_km: float
+) -> list[list[float]]:
+    cumulative = road_cumulative_lengths(coords)
+    if not cumulative or cumulative[-1] == 0:
+        return coords[:]
+
+    start_km = max(0.0, center_km - radius_km)
+    end_km = min(cumulative[-1], center_km + radius_km)
+    points = [point_at_road_distance(coords, cumulative, start_km)]
+    for idx, coord in enumerate(coords):
+        if start_km < cumulative[idx] < end_km:
+            points.append(coord)
+    points.append(point_at_road_distance(coords, cumulative, end_km))
+
+    clean_points = []
+    for point in points:
+        if not clean_points or point_distance_km(clean_points[-1], point) > 0.02:
+            clean_points.append(point)
+    return clean_points if len(clean_points) >= 2 else points[:2]
+
+
+def report_impact_radius_km(report: dict[str, Any]) -> float:
+    radius = IMPACT_RADIUS_BY_TYPE.get(str(report.get("type")), 1.0)
+    radius += min(0.8, int(report.get("confirms", 0)) * 0.12)
+    if report.get("verified"):
+        radius += 0.25
+    return radius
+
+
+def report_impact_segment(report: dict[str, Any]) -> dict[str, Any] | None:
+    projection = best_road_projection(report)
+    if not projection:
+        return None
+    radius_km = report_impact_radius_km(report)
+    road = projection["road"]
+    coords = road_subline(road["coords"], float(projection["position_km"]), radius_km)
+    return {
+        "road_name": road["name"],
+        "coords": coords,
+        "projected_point": projection["point"],
+        "distance_km": projection["distance_km"],
+        "radius_km": radius_km,
+    }
 
 
 def reports_for_road(
@@ -1671,26 +1871,88 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
         if not road:
             continue
 
-        color = str(summary["color"])
-        weight = 8 if summary["status"] == "위험" else 6
+        weight = int(road.get("base_weight", 7))
+        road_shadow = "#0f172a" if is_light else "#020617"
+        road_casing = "#ffffff" if is_light else "#e2e8f0"
+        road_surface = "#cbd5e1" if is_light else "#475569"
         tooltip = (
             f'{summary["name"]} · {summary["status"]}'
             f' · 제보 {summary["count"]}건'
         )
         folium.PolyLine(
             locations=road["coords"],
-            color="#0f172a" if is_light else "#ffffff",
-            weight=weight + 4,
-            opacity=0.22 if is_light else 0.16,
+            color=road_shadow,
+            weight=weight + 8,
+            opacity=0.18 if is_light else 0.28,
+            line_cap="round",
+            line_join="round",
+            smooth_factor=0.45,
             tooltip=tooltip,
         ).add_to(fmap)
         folium.PolyLine(
             locations=road["coords"],
-            color=color,
+            color=road_casing,
+            weight=weight + 4,
+            opacity=0.82 if is_light else 0.72,
+            line_cap="round",
+            line_join="round",
+            smooth_factor=0.45,
+        ).add_to(fmap)
+        folium.PolyLine(
+            locations=road["coords"],
+            color=road_surface,
             weight=weight,
-            opacity=0.88,
+            opacity=0.74 if is_light else 0.7,
+            line_cap="round",
+            line_join="round",
+            smooth_factor=0.45,
             tooltip=tooltip,
         ).add_to(fmap)
+
+    for report in reports:
+        segment = report_impact_segment(report)
+        type_info = TYPE_BY_ID.get(report["type"])
+        if not segment or not type_info:
+            continue
+
+        urgency = int(type_info.get("urgency", 0))
+        impact_weight = 7 + urgency * 2
+        tooltip = (
+            f'{segment["road_name"]} 영향 구간 · {type_info["label"]}'
+            f' · 반경 약 {float(segment["radius_km"]):.1f}km'
+        )
+        folium.PolyLine(
+            locations=segment["coords"],
+            color="#0f172a" if is_light else "#ffffff",
+            weight=impact_weight + 4,
+            opacity=0.24 if is_light else 0.18,
+            line_cap="round",
+            line_join="round",
+            smooth_factor=0.35,
+        ).add_to(fmap)
+        folium.PolyLine(
+            locations=segment["coords"],
+            color=str(type_info["color"]),
+            weight=impact_weight,
+            opacity=0.92,
+            line_cap="round",
+            line_join="round",
+            smooth_factor=0.35,
+            tooltip=tooltip,
+        ).add_to(fmap)
+
+        if float(segment["distance_km"]) > 0.35:
+            folium.PolyLine(
+                locations=[
+                    [float(report["lat"]), float(report["lng"])],
+                    segment["projected_point"],
+                ],
+                color="#64748b",
+                weight=2,
+                opacity=0.45,
+                dash_array="4 5",
+                tooltip="제보 지점에서 도로 영향 구간으로 연결",
+            ).add_to(fmap)
 
     for report in reports:
         type_info = TYPE_BY_ID.get(report["type"])
@@ -2000,9 +2262,9 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
 
 def render_legend() -> None:
     items = [
-        '<span class="legend-item"><span class="legend-line" style="--line:#ef4444;"></span><span>도로 위험</span></span>',
-        '<span class="legend-item"><span class="legend-line" style="--line:#f59e0b;"></span><span>도로 주의</span></span>',
-        '<span class="legend-item"><span class="legend-line" style="--line:#22c55e;"></span><span>도로 양호</span></span>',
+        '<span class="legend-item"><span class="legend-line" style="--line:#cbd5e1;"></span><span>기본 도로</span></span>',
+        '<span class="legend-item"><span class="legend-line" style="--line:#ef4444;"></span><span>제보 영향 구간</span></span>',
+        '<span class="legend-item"><span class="legend-line" style="--line:repeating-linear-gradient(90deg,#64748b 0 6px,transparent 6px 10px);"></span><span>점-도로 연결</span></span>',
     ]
     for item in REPORT_TYPES:
         items.append(
