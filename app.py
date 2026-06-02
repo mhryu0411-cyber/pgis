@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from math import hypot
 from textwrap import dedent
@@ -372,6 +372,7 @@ TOURIST_PRIORITY = {
 }
 
 ROAD_BY_NAME = {road["name"]: road for road in ROAD_LINES}
+CONFIRM_COOLDOWN_HOURS = 4
 
 
 def init_state() -> None:
@@ -384,11 +385,15 @@ def init_state() -> None:
         "reporting_location": None,
         "report_step": 1,
         "report_form": {"type": None, "vehicle": None, "snow": None, "comment": ""},
+        "confirm_locks": {},
         "last_map_signature": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+    for report in st.session_state.reports:
+        report.setdefault("comments", [])
 
     for item in REPORT_TYPES:
         key = f"filter_{item['id']}"
@@ -1099,6 +1104,37 @@ def css() -> None:
             margin-bottom: 0.85rem;
         }
 
+        .comment-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin: 0.55rem 0 0.75rem;
+        }
+
+        .comment-card {
+            padding: 0.62rem 0.68rem;
+            border-radius: 10px;
+            border: 1px solid var(--border-soft);
+            background: var(--panel-soft);
+        }
+
+        .comment-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.5rem;
+            color: var(--muted);
+            font-size: 0.68rem;
+            font-weight: 800;
+            margin-bottom: 0.28rem;
+        }
+
+        .comment-text {
+            color: var(--text);
+            font-size: 0.76rem;
+            line-height: 1.48;
+            overflow-wrap: anywhere;
+        }
+
         .form-location {
             color: var(--muted);
             font-size: 0.78rem;
@@ -1757,21 +1793,73 @@ def sync_query_report_selection() -> None:
         del st.query_params["report"]
 
 
+def confirm_cooldown_remaining(report_id: int) -> timedelta | None:
+    locked_at = st.session_state.confirm_locks.get(str(report_id))
+    if not locked_at:
+        return None
+
+    try:
+        locked_time = datetime.fromisoformat(str(locked_at))
+    except ValueError:
+        st.session_state.confirm_locks.pop(str(report_id), None)
+        return None
+
+    remaining = locked_time + timedelta(hours=CONFIRM_COOLDOWN_HOURS) - datetime.now()
+    if remaining.total_seconds() <= 0:
+        st.session_state.confirm_locks.pop(str(report_id), None)
+        return None
+    return remaining
+
+
+def format_cooldown(remaining: timedelta) -> str:
+    total_minutes = max(1, int((remaining.total_seconds() + 59) // 60))
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    if hours and minutes:
+        return f"{hours}시간 {minutes}분"
+    if hours:
+        return f"{hours}시간"
+    return f"{minutes}분"
+
+
 def confirm_report(report_id: int) -> None:
+    remaining = confirm_cooldown_remaining(report_id)
+    if remaining:
+        st.session_state.toast_message = (
+            f"나도 확인은 4시간에 한 번만 가능해요. {format_cooldown(remaining)} 뒤에 다시 눌러주세요."
+        )
+        return
+
     for report in st.session_state.reports:
         if report["id"] == report_id:
             report["confirms"] += 1
             report["verified"] = report["confirms"] >= 2
+            st.session_state.confirm_locks[str(report_id)] = datetime.now().isoformat(
+                timespec="seconds"
+            )
             st.session_state.toast_message = "👍 확인되었습니다!"
             break
 
 
-def resolve_report(report_id: int) -> None:
-    st.session_state.reports = [
-        report for report in st.session_state.reports if report["id"] != report_id
-    ]
-    st.session_state.selected_report_id = None
-    st.session_state.toast_message = "✅ 해소 처리되었습니다!"
+def add_report_comment(report_id: int) -> None:
+    key = f"comment_input_{report_id}"
+    text = str(st.session_state.get(key, "")).strip()
+    if not text:
+        st.session_state.toast_message = "댓글 내용을 입력해주세요."
+        return
+
+    for report in st.session_state.reports:
+        if report["id"] == report_id:
+            report.setdefault("comments", []).append(
+                {
+                    "time": datetime.now().strftime("%H:%M"),
+                    "author": "현장 댓글",
+                    "text": text,
+                }
+            )
+            st.session_state[key] = ""
+            st.session_state.toast_message = "💬 댓글이 등록되었습니다!"
+            break
 
 
 def select_report(report_id: int) -> None:
@@ -1813,6 +1901,7 @@ def submit_report() -> None:
             "confirms": 0,
             "verified": False,
             "reporter": "새내기",
+            "comments": [],
         }
     )
     st.session_state.reporting_location = None
@@ -1929,9 +2018,39 @@ def render_legend() -> None:
     render_html(f'<div class="legend">{"".join(items)}</div>')
 
 
+def comments_html(report: dict[str, Any]) -> str:
+    comments = report.get("comments", [])
+    if not comments:
+        return clean_html(
+            """
+        <div class="comment-list">
+            <div class="small-muted">아직 댓글이 없습니다. 현장 상황을 짧게 남겨주세요.</div>
+        </div>
+        """
+        )
+
+    cards = []
+    for comment in comments[-5:]:
+        cards.append(
+            clean_html(
+                f"""
+            <div class="comment-card">
+                <div class="comment-head">
+                    <span>{escape(str(comment.get("author", "현장 댓글")))}</span>
+                    <span>{escape(str(comment.get("time", "")))}</span>
+                </div>
+                <div class="comment-text">{escape(str(comment.get("text", "")))}</div>
+            </div>
+            """
+            )
+        )
+    return clean_html(f'<div class="comment-list">{"".join(cards)}</div>')
+
+
 def render_report_detail(report: dict[str, Any]) -> None:
     type_info = TYPE_BY_ID[report["type"]]
     vehicle_info = VEHICLE_BY_ID.get(report["vehicle"], {})
+    report_id = int(report["id"])
     verified = '<span class="badge">✓ 검증됨</span>' if report.get("verified") else ""
     snow = (
         f'<span>❄️ {escape(report["snow"])}</span>'
@@ -1943,6 +2062,15 @@ def render_report_detail(report: dict[str, Any]) -> None:
         if type_info.get("ttl")
         else ""
     )
+
+    back_col, _ = st.columns([0.38, 0.62])
+    with back_col:
+        st.button(
+            "← 타임라인",
+            key=f"back_timeline_{report_id}",
+            use_container_width=True,
+            on_click=close_panel,
+        )
 
     render_html(
         f"""
@@ -1969,22 +2097,37 @@ def render_report_detail(report: dict[str, Any]) -> None:
         """,
     )
 
-    confirm_col, resolved_col = st.columns(2)
-    with confirm_col:
+    remaining = confirm_cooldown_remaining(report_id)
+    if remaining:
+        st.button("👍 나도 확인", key=f"confirm_{report_id}", use_container_width=True, disabled=True)
+        st.caption(f"다시 확인까지 {format_cooldown(remaining)} 남았습니다.")
+    else:
         st.button(
             "👍 나도 확인",
-            key=f"confirm_{report['id']}",
+            key=f"confirm_{report_id}",
             use_container_width=True,
             on_click=confirm_report,
-            args=(report["id"],),
+            args=(report_id,),
         )
-    with resolved_col:
+
+    render_html('<div class="pgis-section-label">현장 댓글</div>')
+    render_html(comments_html(report))
+    comment_col, submit_col = st.columns([0.68, 0.32])
+    with comment_col:
+        st.text_input(
+            "현장 댓글",
+            key=f"comment_input_{report_id}",
+            max_chars=120,
+            placeholder="예: 지금은 제설차 지나가서 조금 나아졌어요",
+            label_visibility="collapsed",
+        )
+    with submit_col:
         st.button(
-            "✅ 해소됨",
-            key=f"resolved_{report['id']}",
+            "댓글",
+            key=f"comment_submit_{report_id}",
             use_container_width=True,
-            on_click=resolve_report,
-            args=(report["id"],),
+            on_click=add_report_comment,
+            args=(report_id,),
         )
 
 
@@ -2140,17 +2283,9 @@ def main() -> None:
     main_col, panel_col = st.columns([0.72, 0.28], gap="medium")
 
     with main_col:
-        restore_col, tourist_col, note_col, moon_col, sun_col = st.columns(
-            [0.16, 0.25, 0.43, 0.08, 0.08]
+        tourist_col, note_col, sun_col, moon_col = st.columns(
+            [0.25, 0.59, 0.08, 0.08]
         )
-        with restore_col:
-            if st.button(
-                "☰ 사이드바",
-                key="open_sidebar_button",
-                use_container_width=True,
-                help="왼쪽 바가 접혔을 때 다시 엽니다.",
-            ):
-                open_sidebar()
         with tourist_col:
             st.button(
                 "🗺️ 관광객 모드",
@@ -2162,16 +2297,6 @@ def main() -> None:
             )
         with note_col:
             render_html('<div class="map-note">지도를 클릭하여 제보하기</div>')
-        with moon_col:
-            st.button(
-                "🌙",
-                key="theme_dark_button",
-                type="primary" if st.session_state.theme_mode == "dark" else "secondary",
-                use_container_width=True,
-                help="🌙",
-                on_click=set_theme_mode,
-                args=("dark",),
-            )
         with sun_col:
             st.button(
                 "☀️",
@@ -2181,6 +2306,16 @@ def main() -> None:
                 help="☀️",
                 on_click=set_theme_mode,
                 args=("light",),
+            )
+        with moon_col:
+            st.button(
+                "🌙",
+                key="theme_dark_button",
+                type="primary" if st.session_state.theme_mode == "dark" else "secondary",
+                use_container_width=True,
+                help="🌙",
+                on_click=set_theme_mode,
+                args=("dark",),
             )
 
         if st.session_state.tourist_mode:
