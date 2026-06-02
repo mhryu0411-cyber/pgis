@@ -379,7 +379,7 @@ def init_state() -> None:
         "reports": deepcopy(SAMPLE_REPORTS),
         "active_filters": [item["id"] for item in REPORT_TYPES],
         "tourist_mode": False,
-        "theme_mode": "dark",
+        "theme_mode": "light",
         "selected_report_id": None,
         "reporting_location": None,
         "report_step": 1,
@@ -889,6 +889,131 @@ def css() -> None:
             line-height: 1.4;
         }
 
+        .timeline-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.58rem;
+            margin-top: 0.1rem;
+        }
+
+        .timeline-item {
+            display: grid;
+            grid-template-columns: 2.05rem minmax(0, 1fr);
+            gap: 0.55rem;
+            position: relative;
+        }
+
+        .timeline-rail {
+            position: relative;
+            display: flex;
+            justify-content: center;
+        }
+
+        .timeline-rail::after {
+            content: "";
+            position: absolute;
+            top: 2.1rem;
+            bottom: -0.75rem;
+            width: 2px;
+            border-radius: 999px;
+            background: var(--border-soft);
+        }
+
+        .timeline-item:last-child .timeline-rail::after { display: none; }
+
+        .timeline-dot {
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 10px;
+            background: var(--tint);
+            border: 1px solid var(--accent);
+            color: var(--text-strong);
+            font-size: 1rem;
+            box-shadow: 0 8px 18px var(--shadow);
+        }
+
+        .timeline-card {
+            display: block;
+            min-width: 0;
+            padding: 0.62rem 0.68rem;
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+            border-radius: 10px;
+            background: var(--panel);
+            color: var(--text);
+            text-decoration: none;
+            box-shadow: 0 8px 20px var(--shadow);
+        }
+
+        .timeline-card:hover {
+            background: var(--panel-hover);
+            border-color: var(--border-strong);
+        }
+
+        .timeline-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            min-width: 0;
+        }
+
+        .timeline-title {
+            color: var(--text-strong);
+            font-size: 0.84rem;
+            font-weight: 900;
+            line-height: 1.25;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .timeline-title .timeline-chip { margin-right: 0.32rem; }
+
+        .timeline-time {
+            flex: 0 0 auto;
+            color: var(--muted);
+            font-size: 0.72rem;
+            font-weight: 800;
+        }
+
+        .timeline-copy {
+            color: var(--text);
+            font-size: 0.76rem;
+            line-height: 1.45;
+            margin-top: 0.34rem;
+            overflow-wrap: anywhere;
+        }
+
+        .timeline-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.32rem;
+            margin-top: 0.5rem;
+        }
+
+        .timeline-chip {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 0.12rem 0.38rem;
+            background: var(--panel-soft);
+            border: 1px solid var(--border-soft);
+            color: var(--muted);
+            font-size: 0.67rem;
+            font-weight: 800;
+        }
+
+        .timeline-chip-strong {
+            background: var(--tint);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
         .legend {
             display: flex;
             flex-wrap: wrap;
@@ -1071,6 +1196,17 @@ def tourist_sorted_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]
             -int(bool(report.get("verified"))),
             -int(report.get("confirms", 0)),
             -report_time_minutes(report),
+        ),
+    )
+
+
+def recent_sorted_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        reports,
+        key=lambda report: (
+            -report_time_minutes(report),
+            -int(bool(report.get("verified"))),
+            -int(report.get("confirms", 0)),
         ),
     )
 
@@ -1387,6 +1523,57 @@ def type_overview(reports: list[dict[str, Any]]) -> str:
     )
 
 
+def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
+    type_info = TYPE_BY_ID[report["type"]]
+    vehicle_info = VEHICLE_BY_ID.get(str(report.get("vehicle")), {})
+    priority = TOURIST_PRIORITY.get(str(report.get("type")), 99)
+    priority_chip = (
+        '<span class="timeline-chip timeline-chip-strong">우선</span>'
+        if tourist_mode and priority <= 4
+        else ""
+    )
+    verified_chip = (
+        '<span class="timeline-chip timeline-chip-strong">검증됨</span>'
+        if report.get("verified")
+        else ""
+    )
+    snow_chip = (
+        f'<span class="timeline-chip">❄️ {escape(str(report["snow"]))}</span>'
+        if report.get("snow")
+        else ""
+    )
+    vehicle_chip = (
+        f'<span class="timeline-chip">{vehicle_info.get("icon", "")} '
+        f'{escape(str(vehicle_info.get("label", "")))}</span>'
+    )
+    href = f'?report={int(report["id"])}'
+
+    return clean_html(
+        f"""
+    <div class="timeline-item" style="--accent:{type_info["color"]};--tint:{type_info["color"]}20;">
+        <div class="timeline-rail">
+            <span class="timeline-dot">{type_info["icon"]}</span>
+        </div>
+        <a class="timeline-card" href="{href}" target="_self">
+            <div class="timeline-head">
+                <div class="timeline-title">
+                    {priority_chip}{escape(type_info["label"])}
+                </div>
+                <span class="timeline-time">{escape(str(report["time"]))}</span>
+            </div>
+            <div class="timeline-copy">{escape(str(report["comment"]))}</div>
+            <div class="timeline-meta">
+                {vehicle_chip}
+                {snow_chip}
+                <span class="timeline-chip">👍 {int(report["confirms"])}명</span>
+                {verified_chip}
+            </div>
+        </a>
+    </div>
+    """
+    )
+
+
 def marker_html(type_info: dict[str, Any], verified: bool) -> str:
     border = "#ffffff" if st.session_state.theme_mode == "dark" else "#0f172a"
     glow = (
@@ -1553,6 +1740,21 @@ def current_report() -> dict[str, Any] | None:
             return report
     st.session_state.selected_report_id = None
     return None
+
+
+def sync_query_report_selection() -> None:
+    report_param = st.query_params.get("report")
+    if not report_param:
+        return
+
+    try:
+        st.session_state.selected_report_id = int(report_param)
+        st.session_state.reporting_location = None
+    except (TypeError, ValueError):
+        pass
+
+    if "report" in st.query_params:
+        del st.query_params["report"]
 
 
 def confirm_report(report_id: int) -> None:
@@ -1905,21 +2107,16 @@ def render_idle_panel(reports: list[dict[str, Any]]) -> None:
     if tourist_mode:
         render_tourist_guide(reports)
 
-    render_html(
-        (
-            '<div class="pgis-section-label">관광객 우선 체크</div>'
-            if tourist_mode
-            else '<div class="pgis-section-label">최근 제보</div>'
-        )
+    title = "관광객 우선 타임라인" if tourist_mode else "최근 제보 타임라인"
+    render_html(f'<div class="pgis-section-label">{title}</div>')
+
+    panel_reports = (
+        tourist_sorted_reports(reports) if tourist_mode else recent_sorted_reports(reports)
     )
-    panel_reports = tourist_sorted_reports(reports) if tourist_mode else reports
-    for report in panel_reports[:6]:
-        type_info = TYPE_BY_ID[report["type"]]
-        prefix = "우선 " if tourist_mode and TOURIST_PRIORITY.get(report["type"], 99) <= 4 else ""
-        label = f'{type_info["icon"]} {prefix}{type_info["label"]} · {report["time"]}'
-        if st.button(label, key=f"recent_{report['id']}", use_container_width=True):
-            select_report(report["id"])
-            st.rerun()
+    timeline_items = "".join(
+        timeline_card(report, tourist_mode=tourist_mode) for report in panel_reports[:6]
+    )
+    render_html(f'<div class="timeline-list">{timeline_items}</div>')
 
 
 def main() -> None:
@@ -1930,6 +2127,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     init_state()
+    sync_query_report_selection()
     css()
 
     toast_message = st.session_state.pop("toast_message", None)
