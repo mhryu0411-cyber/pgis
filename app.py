@@ -505,32 +505,6 @@ def css() -> None:
             font-size: .76rem;
             font-weight: 900;
         }}
-        .control-grid {{
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: .45rem;
-            margin-top: .6rem;
-        }}
-        .control-count {{
-            background: var(--panel-alt);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: .55rem .5rem;
-        }}
-        .control-count strong {{
-            display: block;
-            color: var(--text);
-            font-size: 1.1rem;
-            line-height: 1;
-        }}
-        .control-count span {{
-            display: block;
-            margin-top: .25rem;
-            color: var(--muted);
-            font-size: .7rem;
-            white-space: nowrap;
-        }}
-
         .road-card, .type-card, .timeline-card, .detail-card, .comment-card, .photo-tile {{
             background: var(--panel);
             border: 1px solid var(--border);
@@ -758,7 +732,6 @@ def css() -> None:
             margin-bottom: .55rem;
         }}
         @media (max-width: 900px) {{
-            .control-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
             .photo-grid {{ grid-template-columns: 1fr; }}
         }}
         </style>
@@ -1002,22 +975,9 @@ def top_control_status(reports: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def render_control_board(reports: list[dict[str, Any]], compact: bool = False) -> None:
-    statuses = road_statuses(reports)
     top = top_control_status(reports)
-    closed = sum(1 for item in statuses if item["status"] == "통제")
-    partial = sum(1 for item in statuses if item["status"] == "부분 통제")
-    caution = sum(1 for item in statuses if item["status"] == "주의")
-    open_count = sum(1 for item in statuses if item["status"] == "통행 가능")
     top_title = "실제 통제 없음" if top["level"] == 0 else f"{top['name']} {top['status']}"
     updated = datetime.now().strftime("%H:%M")
-    grid = "" if compact else f"""
-        <div class="control-grid">
-            <div class="control-count"><strong>{closed}</strong><span>통제</span></div>
-            <div class="control-count"><strong>{partial}</strong><span>부분 통제</span></div>
-            <div class="control-count"><strong>{caution}</strong><span>주의</span></div>
-            <div class="control-count"><strong>{open_count}</strong><span>통행 가능</span></div>
-        </div>
-    """
     render_html(
         f"""
         <div class="control-board">
@@ -1035,7 +995,6 @@ def render_control_board(reports: list[dict[str, Any]], compact: bool = False) -
                 </div>
                 <span class="status-badge">{escape(top['status'])}</span>
             </div>
-            {grid}
         </div>
         """
     )
@@ -1098,7 +1057,7 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
         theme_col_light, theme_col_dark = st.columns(2)
         with theme_col_light:
             st.button(
-                "☀️ 라이트",
+                "☀️",
                 key="theme_light_sidebar",
                 type="primary" if st.session_state.theme_mode == "light" else "secondary",
                 use_container_width=True,
@@ -1107,7 +1066,7 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
             )
         with theme_col_dark:
             st.button(
-                "🌙 다크",
+                "🌙",
                 key="theme_dark_sidebar",
                 type="primary" if st.session_state.theme_mode == "dark" else "secondary",
                 use_container_width=True,
@@ -1294,6 +1253,21 @@ def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
     )
 
 
+def timeline_button_label(report: dict[str, Any], tourist_mode: bool = False) -> str:
+    type_info = TYPE_BY_ID[report["type"]]
+    verified = " ✓" if report.get("verified") else ""
+    road_name = report_road_name(report)
+    comment = str(report.get("comment", "")).strip()
+    if len(comment) > 42:
+        comment = f"{comment[:42]}..."
+    prefix = "먼저 확인 · " if tourist_mode and type_info["control_level"] >= 4 else ""
+    return (
+        f"{prefix}{type_info['icon']} {type_info['label']}{verified} · {report.get('time', '')}\n"
+        f"{road_name} · 💬 {comment_count(report)} · 📷 {photo_count(report)}\n"
+        f"{comment}"
+    )
+
+
 def render_timeline(reports: list[dict[str, Any]]) -> None:
     tourist_mode = st.session_state.tourist_mode
     panel_reports = tourist_sorted_reports(reports) if tourist_mode else recent_sorted_reports(reports)
@@ -1318,7 +1292,7 @@ def render_timeline(reports: list[dict[str, Any]]) -> None:
         )
     with mode_col:
         st.button(
-            "통제 우선 보기" if not tourist_mode else "시간순 보기",
+            "통제 우선" if not tourist_mode else "시간순",
             use_container_width=True,
             on_click=toggle_tourist_mode,
         )
@@ -1328,17 +1302,14 @@ def render_timeline(reports: list[dict[str, Any]]) -> None:
         return
 
     for report in panel_reports[:8]:
-        card_col, action_col = st.columns([0.78, 0.22], gap="small")
-        with card_col:
-            render_html(timeline_card(report, tourist_mode=tourist_mode))
-        with action_col:
-            st.button(
-                "보기",
-                key=f"open_report_{report['id']}",
-                use_container_width=True,
-                on_click=select_report,
-                args=(int(report["id"]),),
-            )
+        st.button(
+            timeline_button_label(report, tourist_mode=tourist_mode),
+            key=f"open_report_{report['id']}",
+            use_container_width=True,
+            on_click=select_report,
+            args=(int(report["id"]),),
+            help="타임라인 항목을 열어 상세 정보를 봅니다.",
+        )
 
 
 def render_photo_gallery(photos: list[dict[str, str]]) -> None:
