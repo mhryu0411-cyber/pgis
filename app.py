@@ -568,6 +568,23 @@ def css() -> None:
             margin-bottom: .38rem;
             border-left: 4px solid var(--accent);
         }}
+        .timeline-link {{
+            display: block;
+            color: inherit;
+            text-decoration: none;
+            cursor: pointer;
+            transition: background .12s ease, border-color .12s ease, transform .12s ease;
+        }}
+        .timeline-link:hover {{
+            background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+            border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+            transform: translateY(-1px);
+        }}
+        .timeline-link:visited,
+        .timeline-link:active {{
+            color: inherit;
+            text-decoration: none;
+        }}
         .timeline-top {{
             display: flex;
             justify-content: space-between;
@@ -731,6 +748,12 @@ def css() -> None:
             font-size: .78rem;
             margin-bottom: .55rem;
         }}
+        .st-key-theme_light_sidebar button,
+        .st-key-theme_dark_sidebar button {{
+            min-height: 2rem;
+            padding: .18rem .36rem;
+            font-size: .9rem;
+        }}
         @media (max-width: 900px) {{
             .photo-grid {{ grid-template-columns: 1fr; }}
         }}
@@ -783,17 +806,20 @@ def toggle_tourist_mode() -> None:
 def select_report(report_id: int) -> None:
     st.session_state.selected_report_id = report_id
     st.session_state.reporting_location = None
+    set_query_report_selection(report_id)
 
 
 def close_panel() -> None:
     st.session_state.selected_report_id = None
     st.session_state.reporting_location = None
+    clear_query_report_selection()
 
 
 def start_report_at(lat: float, lng: float) -> None:
     st.session_state.reporting_location = {"lat": float(lat), "lng": float(lng)}
     st.session_state.last_clicked_location = {"lat": float(lat), "lng": float(lng)}
     st.session_state.selected_report_id = None
+    clear_query_report_selection()
 
 
 def start_report_from_timeline() -> None:
@@ -810,6 +836,45 @@ def current_report() -> dict[str, Any] | None:
             return report
     st.session_state.selected_report_id = None
     return None
+
+
+def set_query_report_selection(report_id: int) -> None:
+    try:
+        st.query_params["report"] = str(report_id)
+    except Exception:
+        pass
+
+
+def clear_query_report_selection() -> None:
+    try:
+        if "report" in st.query_params:
+            del st.query_params["report"]
+    except Exception:
+        pass
+
+
+def sync_query_report_selection() -> None:
+    try:
+        value = st.query_params.get("report")
+    except Exception:
+        return
+
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if not value:
+        return
+
+    try:
+        report_id = int(value)
+    except (TypeError, ValueError):
+        clear_query_report_selection()
+        return
+
+    if any(int(report["id"]) == report_id for report in st.session_state.reports):
+        st.session_state.selected_report_id = report_id
+        st.session_state.reporting_location = None
+    else:
+        clear_query_report_selection()
 
 
 def filtered_reports() -> list[dict[str, Any]]:
@@ -1054,7 +1119,7 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
             <div class="live-pill"><span class="live-dot"></span><span>표시 {len(reports)}건 · 전체 {len(control_reports)}건</span></div>
             """
         )
-        theme_col_light, theme_col_dark = st.columns(2)
+        theme_col_light, theme_col_dark, _theme_spacer = st.columns([0.18, 0.18, 0.64])
         with theme_col_light:
             st.button(
                 "☀️",
@@ -1241,30 +1306,15 @@ def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
         chips.insert(0, "<span class='meta-chip'>먼저 확인</span>")
     return clean_html(
         f"""
-        <div class="timeline-card" style="--accent:{type_info['color']};">
+        <a class="timeline-card timeline-link" href="?report={int(report['id'])}" target="_self" style="--accent:{type_info['color']};">
             <div class="timeline-top">
                 <div class="timeline-type">{type_info['icon']} {escape(type_info['label'])}{verified}</div>
                 <div class="timeline-time">{escape(str(report.get('time', '')))}</div>
             </div>
             <div class="timeline-comment">{escape(str(report.get('comment', '')))}</div>
             <div class="timeline-meta">{''.join(chips)}</div>
-        </div>
+        </a>
         """
-    )
-
-
-def timeline_button_label(report: dict[str, Any], tourist_mode: bool = False) -> str:
-    type_info = TYPE_BY_ID[report["type"]]
-    verified = " ✓" if report.get("verified") else ""
-    road_name = report_road_name(report)
-    comment = str(report.get("comment", "")).strip()
-    if len(comment) > 42:
-        comment = f"{comment[:42]}..."
-    prefix = "먼저 확인 · " if tourist_mode and type_info["control_level"] >= 4 else ""
-    return (
-        f"{prefix}{type_info['icon']} {type_info['label']}{verified} · {report.get('time', '')}\n"
-        f"{road_name} · 💬 {comment_count(report)} · 📷 {photo_count(report)}\n"
-        f"{comment}"
     )
 
 
@@ -1302,14 +1352,7 @@ def render_timeline(reports: list[dict[str, Any]]) -> None:
         return
 
     for report in panel_reports[:8]:
-        st.button(
-            timeline_button_label(report, tourist_mode=tourist_mode),
-            key=f"open_report_{report['id']}",
-            use_container_width=True,
-            on_click=select_report,
-            args=(int(report["id"]),),
-            help="타임라인 항목을 열어 상세 정보를 봅니다.",
-        )
+        render_html(timeline_card(report, tourist_mode=tourist_mode))
 
 
 def render_photo_gallery(photos: list[dict[str, str]]) -> None:
@@ -1638,6 +1681,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     init_state()
+    sync_query_report_selection()
     css()
 
     reports = filtered_reports()
@@ -1646,8 +1690,6 @@ def main() -> None:
     main_col, panel_col = st.columns([0.70, 0.30], gap="medium")
 
     with main_col:
-        render_control_board(st.session_state.reports)
-
         fmap = build_map(reports)
         map_data = st_folium(
             fmap,
