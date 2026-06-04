@@ -571,9 +571,15 @@ def css() -> None:
         .timeline-link {{
             display: block;
             color: inherit;
-            text-decoration: none;
+            text-decoration: none !important;
             cursor: pointer;
             transition: background .12s ease, border-color .12s ease, transform .12s ease;
+        }}
+        .timeline-link *,
+        .timeline-link:hover *,
+        .timeline-link:visited *,
+        .timeline-link:active * {{
+            text-decoration: none !important;
         }}
         .timeline-link:hover {{
             background: color-mix(in srgb, var(--accent) 8%, var(--panel));
@@ -583,7 +589,7 @@ def css() -> None:
         .timeline-link:visited,
         .timeline-link:active {{
             color: inherit;
-            text-decoration: none;
+            text-decoration: none !important;
         }}
         .timeline-top {{
             display: flex;
@@ -1294,10 +1300,9 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
 
 def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
     type_info = TYPE_BY_ID[report["type"]]
-    verified = " · 검증됨" if report.get("verified") else ""
     road_name = report_road_name(report)
     chips = [
-        f"<span class='meta-chip'>🛣️ {escape(road_name)}</span>",
+        f"<span class='meta-chip'>{type_info['icon']} {escape(type_info['label'])}</span>",
         f"<span class='meta-chip'>💬 {comment_count(report)}</span>",
         f"<span class='meta-chip'>📷 {photo_count(report)}</span>",
         f"<span class='meta-chip'>확인 {int(report.get('confirms', 0))}</span>",
@@ -1308,7 +1313,7 @@ def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
         f"""
         <a class="timeline-card timeline-link" href="?report={int(report['id'])}" target="_self" style="--accent:{type_info['color']};">
             <div class="timeline-top">
-                <div class="timeline-type">{type_info['icon']} {escape(type_info['label'])}{verified}</div>
+                <div class="timeline-type">{type_info['icon']} {escape(road_name)}</div>
                 <div class="timeline-time">{escape(str(report.get('time', '')))}</div>
             </div>
             <div class="timeline-comment">{escape(str(report.get('comment', '')))}</div>
