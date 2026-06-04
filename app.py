@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from math import cos, hypot, radians
 from textwrap import dedent
@@ -15,6 +15,7 @@ from streamlit_folium import st_folium
 
 JEJU_CENTER = {"lat": 33.3798, "lng": 126.5453}
 ROAD_MATCH_THRESHOLD_KM = 4.5
+CONFIRM_COOLDOWN_HOURS = 4
 
 REPORT_TYPES = [
     {
@@ -933,7 +934,7 @@ def status_for_related_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
             "label": "정보 없음",
             "color": "#94a3b8",
             "level": 0,
-            "desc": "아직 이 구간 제보가 없습니다.",
+            "desc": "제보 없음",
             "report": None,
         }
 
@@ -951,16 +952,16 @@ def status_for_related_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
 
     if top["type"] == "blocked":
         status = "통제"
-        desc = f"통제 제보 {report_total}건, 우회 확인이 먼저입니다."
+        desc = f"제보 {report_total}건 · 우회 필요"
     elif top["type"] in {"suv_only", "chain"}:
         status = "부분 통제"
-        desc = f"{type_info['label']} 제보가 있어 일반 승용차는 주의가 필요합니다."
+        desc = f"{type_info['label']} · 조건부 통행"
     elif top["type"] in {"snow_heavy", "blackice", "snow_light", "photo"}:
         status = "주의"
-        desc = f"{type_info['label']} 제보가 있어 감속 운전이 필요합니다."
+        desc = f"{type_info['label']} · 감속"
     else:
         status = "통행 가능"
-        desc = "통행 가능 또는 제설 완료 제보가 우세합니다."
+        desc = "정상 통행 제보"
 
     return {
         "status": status,
@@ -1007,7 +1008,7 @@ def render_control_board(reports: list[dict[str, Any]], compact: bool = False) -
     partial = sum(1 for item in statuses if item["status"] == "부분 통제")
     caution = sum(1 for item in statuses if item["status"] == "주의")
     open_count = sum(1 for item in statuses if item["status"] == "통행 가능")
-    top_title = "제보 기준 통제 없음" if top["level"] == 0 else f"{top['name']} {top['status']}"
+    top_title = "실제 통제 없음" if top["level"] == 0 else f"{top['name']} {top['status']}"
     updated = datetime.now().strftime("%H:%M")
     grid = "" if compact else f"""
         <div class="control-grid">
@@ -1022,8 +1023,8 @@ def render_control_board(reports: list[dict[str, Any]], compact: bool = False) -
         <div class="control-board">
             <div class="control-head">
                 <div>
-                    <div class="control-kicker">제주 도로 통제 판단</div>
-                    <div class="control-title">통제 여부 먼저 보기</div>
+                    <div class="control-kicker">제주 도로 현황</div>
+                    <div class="control-title">실제 통제</div>
                 </div>
                 <div class="control-time">{updated}</div>
             </div>
@@ -1094,6 +1095,25 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
             <div class="live-pill"><span class="live-dot"></span><span>표시 {len(reports)}건 · 전체 {len(control_reports)}건</span></div>
             """
         )
+        theme_col_light, theme_col_dark = st.columns(2)
+        with theme_col_light:
+            st.button(
+                "☀️ 라이트",
+                key="theme_light_sidebar",
+                type="primary" if st.session_state.theme_mode == "light" else "secondary",
+                use_container_width=True,
+                on_click=set_theme_mode,
+                args=("light",),
+            )
+        with theme_col_dark:
+            st.button(
+                "🌙 다크",
+                key="theme_dark_sidebar",
+                type="primary" if st.session_state.theme_mode == "dark" else "secondary",
+                use_container_width=True,
+                on_click=set_theme_mode,
+                args=("dark",),
+            )
 
         status_tab, filter_tab, info_tab = st.tabs(["통제", "필터", "안내"])
 
@@ -1399,11 +1419,44 @@ def add_report_comment(report_id: int, text: str, files: list[Any] | None) -> No
             break
 
 
+def confirm_cooldown_remaining(report_id: int) -> timedelta | None:
+    locked_at = st.session_state.confirm_locks.get(str(report_id))
+    if not locked_at:
+        return None
+
+    try:
+        last_confirmed = datetime.fromisoformat(locked_at)
+    except ValueError:
+        st.session_state.confirm_locks.pop(str(report_id), None)
+        return None
+
+    remaining = last_confirmed + timedelta(hours=CONFIRM_COOLDOWN_HOURS) - datetime.now()
+    return remaining if remaining.total_seconds() > 0 else None
+
+
+def format_cooldown(remaining: timedelta) -> str:
+    total_minutes = max(1, int(remaining.total_seconds() // 60) + 1)
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours}시간 {minutes}분"
+    if hours:
+        return f"{hours}시간"
+    return f"{minutes}분"
+
+
 def confirm_report(report_id: int) -> None:
+    remaining = confirm_cooldown_remaining(report_id)
+    if remaining:
+        st.toast(f"현장 확인은 4시간에 한 번 가능합니다. {format_cooldown(remaining)} 뒤에 다시 눌러 주세요.")
+        return
+
     for report in st.session_state.reports:
         if int(report["id"]) == report_id:
             report["confirms"] = int(report.get("confirms", 0)) + 1
             report["verified"] = report["confirms"] >= 2
+            st.session_state.confirm_locks[str(report_id)] = datetime.now().isoformat(
+                timespec="seconds"
+            )
             st.toast("현장 확인이 반영되었습니다.")
             break
 
@@ -1462,13 +1515,25 @@ def render_report_detail(report: dict[str, Any]) -> None:
 
     render_photo_gallery(report.get("photos", []))
 
-    st.button(
-        "현장 확인",
-        type="primary",
-        use_container_width=True,
-        on_click=confirm_report,
-        args=(report_id,),
-    )
+    remaining = confirm_cooldown_remaining(report_id)
+    if remaining:
+        st.button(
+            "현장 확인",
+            type="primary",
+            use_container_width=True,
+            disabled=True,
+            key=f"confirm_disabled_{report_id}",
+        )
+        st.caption(f"다음 확인까지 {format_cooldown(remaining)}")
+    else:
+        st.button(
+            "현장 확인",
+            type="primary",
+            use_container_width=True,
+            on_click=confirm_report,
+            args=(report_id,),
+            key=f"confirm_enabled_{report_id}",
+        )
 
     render_html('<div class="section-label">댓글</div>')
     render_html(comments_html(report))
@@ -1610,27 +1675,7 @@ def main() -> None:
     main_col, panel_col = st.columns([0.70, 0.30], gap="medium")
 
     with main_col:
-        mode_col, light_col, dark_col = st.columns([0.72, 0.14, 0.14])
-        with mode_col:
-            render_control_board(st.session_state.reports)
-        with light_col:
-            st.button(
-                "☀️",
-                key="theme_light",
-                type="primary" if st.session_state.theme_mode == "light" else "secondary",
-                use_container_width=True,
-                on_click=set_theme_mode,
-                args=("light",),
-            )
-        with dark_col:
-            st.button(
-                "🌙",
-                key="theme_dark",
-                type="primary" if st.session_state.theme_mode == "dark" else "secondary",
-                use_container_width=True,
-                on_click=set_theme_mode,
-                args=("dark",),
-            )
+        render_control_board(st.session_state.reports)
 
         fmap = build_map(reports)
         map_data = st_folium(
