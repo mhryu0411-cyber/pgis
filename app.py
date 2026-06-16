@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta
 from html import escape
@@ -26,6 +28,23 @@ DANGER_HEAT_GRADIENT = {
     0.84: "#b91c1c",
     1.00: "#7f1d1d",
 }
+ROAD_DB_URL_ENV_KEYS = ("PGIS_DATABASE_URL", "DATABASE_URL", "POSTGRES_URL")
+ROAD_DB_TABLE = os.getenv("PGIS_ROAD_TABLE", "jeju_important")
+ROAD_DB_NAME_FIELD = os.getenv("PGIS_ROAD_NAME_FIELD", "rn")
+ROAD_DB_LAYER_LABEL = os.getenv("PGIS_ROAD_LAYER_LABEL", "DB 도로망")
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
+ROAD_DB_LIMIT = env_int("PGIS_ROAD_LIMIT", 2500, 1, 20000)
+ROAD_DB_SOURCE_SRID = env_int("PGIS_ROAD_SOURCE_SRID", 5179, 1, 999999)
 
 REPORT_TYPES = [
     {
@@ -1003,6 +1022,139 @@ def tourist_sorted_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]
     )
 
 
+def road_database_url() -> str | None:
+    for key in ROAD_DB_URL_ENV_KEYS:
+        value = os.getenv(key)
+        if value:
+            return value
+    return None
+
+
+def sql_identifier(table_or_column: str) -> Any:
+    from psycopg2 import sql
+
+    parts = [part.strip() for part in table_or_column.split(".") if part.strip()]
+    if not parts or any(not IDENTIFIER_RE.match(part) for part in parts):
+        raise ValueError(f"잘못된 DB 식별자: {table_or_column}")
+    return sql.Identifier(*parts)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_road_geojson(
+    table_name: str,
+    name_field: str,
+    limit: int,
+    source_srid: int,
+    db_url: str | None,
+) -> tuple[dict[str, Any], str | None]:
+    if not db_url:
+        return {"type": "FeatureCollection", "features": []}, None
+
+    try:
+        import psycopg2
+        from psycopg2 import sql
+    except ImportError:
+        return {
+            "type": "FeatureCollection",
+            "features": [],
+        }, "PostGIS 연결 패키지(psycopg2-binary)가 설치되지 않았습니다."
+
+    try:
+        table_identifier = sql_identifier(table_name)
+        name_identifier = sql_identifier(name_field)
+    except ValueError as exc:
+        return {"type": "FeatureCollection", "features": []}, str(exc)
+
+    query = sql.SQL(
+        """
+        WITH src AS (
+            SELECT
+                id::text AS id,
+                COALESCE(NULLIF({name_field}::text, ''), '도로 ' || id::text) AS road_name,
+                NULLIF(roa_cls_se::text, '') AS road_class,
+                NULLIF(road_bt::text, '') AS road_width,
+                NULLIF(road_lt::text, '') AS road_length,
+                CASE
+                    WHEN ST_SRID(geom) = 4326 THEN geom
+                    WHEN ST_SRID(geom) > 0 THEN ST_Transform(geom, 4326)
+                    ELSE ST_Transform(ST_SetSRID(geom, %s), 4326)
+                END AS wgs_geom
+            FROM {table_name}
+            WHERE geom IS NOT NULL
+        )
+        SELECT
+            id,
+            road_name,
+            road_class,
+            road_width,
+            road_length,
+            ST_AsGeoJSON(ST_SimplifyPreserveTopology(wgs_geom, 0.000015), 6) AS geometry
+        FROM src
+        WHERE NOT ST_IsEmpty(wgs_geom)
+        ORDER BY NULLIF(road_length, '')::numeric DESC NULLS LAST, id
+        LIMIT %s
+        """
+    ).format(table_name=table_identifier, name_field=name_identifier)
+
+    features: list[dict[str, Any]] = []
+    try:
+        with psycopg2.connect(db_url, connect_timeout=5) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (source_srid, limit))
+                for row in cursor.fetchall():
+                    geometry = json.loads(row[5]) if row[5] else None
+                    if not geometry:
+                        continue
+                    features.append(
+                        {
+                            "type": "Feature",
+                            "id": row[0],
+                            "properties": {
+                                "id": row[0],
+                                "name": row[1] or "도로",
+                                "road_class": row[2] or "-",
+                                "width": row[3] or "-",
+                                "length": row[4] or "-",
+                            },
+                            "geometry": geometry,
+                        }
+                    )
+    except Exception as exc:
+        return {
+            "type": "FeatureCollection",
+            "features": [],
+        }, f"DB 도로 레이어를 불러오지 못했습니다: {exc}"
+
+    return {"type": "FeatureCollection", "features": features}, None
+
+
+def road_geojson_layer() -> tuple[dict[str, Any], str | None]:
+    return load_road_geojson(
+        ROAD_DB_TABLE,
+        ROAD_DB_NAME_FIELD,
+        ROAD_DB_LIMIT,
+        ROAD_DB_SOURCE_SRID,
+        road_database_url(),
+    )
+
+
+def db_road_style(feature: dict[str, Any]) -> dict[str, Any]:
+    props = feature.get("properties", {})
+    try:
+        width = float(props.get("width") or 0)
+    except (TypeError, ValueError):
+        width = 0
+    return {
+        "color": "#475569",
+        "weight": 3.0 if width >= 20 else 2.2 if width >= 10 else 1.4,
+        "opacity": 0.42,
+    }
+
+
+def db_road_highlight(feature: dict[str, Any]) -> dict[str, Any]:
+    return {"color": "#0f766e", "weight": 5, "opacity": 0.9}
+
+
 def camera_matches_road(camera: dict[str, Any], road_name: str) -> bool:
     return any(road in road_name or road_name in road for road in camera["roads"])
 
@@ -1527,6 +1679,23 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
         control_scale=True,
     )
 
+    db_roads, db_road_error = road_geojson_layer()
+    if db_roads["features"]:
+        folium.GeoJson(
+            db_roads,
+            name=ROAD_DB_LAYER_LABEL,
+            style_function=db_road_style,
+            highlight_function=db_road_highlight,
+            tooltip=folium.GeoJsonTooltip(
+                fields=["name", "road_class", "width", "length"],
+                aliases=["도로명", "분류", "폭", "길이"],
+                sticky=True,
+                localize=True,
+            ),
+        ).add_to(fmap)
+    elif db_road_error:
+        st.caption(db_road_error)
+
     heat_data = heatmap_points(reports)
     if heat_data:
         HeatMap(
@@ -1566,6 +1735,9 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
             popup=folium.Popup(popup, max_width=260),
             icon=folium.DivIcon(html=report_marker_html(report)),
         ).add_to(fmap)
+
+    if db_roads["features"]:
+        folium.LayerControl(collapsed=True).add_to(fmap)
 
     return fmap
 
