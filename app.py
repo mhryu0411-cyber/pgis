@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from copy import deepcopy
 from datetime import datetime, timedelta
 from html import escape
@@ -108,6 +109,70 @@ VEHICLE_TYPES = [
 ]
 
 SNOW_DEPTH = ["발목 아래", "발목~무릎", "무릎 이상"]
+
+CCTV_SOURCE_PAGE = "http://bangjae.jeju.go.kr/realtimeinfor/cctv/snow.htm"
+CCTV_STREAMS = [
+    {
+        "id": "peace_entrance",
+        "name": "평화로입구",
+        "roads": ["평화로", "제주시내"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100017/0/0",
+    },
+    {
+        "id": "marine_brigade",
+        "name": "해병9여단",
+        "roads": ["평화로", "서귀포시내"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100018/0/0",
+    },
+    {
+        "id": "sancheondan",
+        "name": "산천단입구",
+        "roads": ["5.16도로", "제주시내"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100016/0/0",
+    },
+    {
+        "id": "jewon_ranch",
+        "name": "제원목장",
+        "roads": ["1100도로"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100216/0/0",
+    },
+    {
+        "id": "bijarim",
+        "name": "비자림",
+        "roads": ["번영로", "동부 해안도로"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100015/0/0",
+    },
+    {
+        "id": "samdasoo",
+        "name": "삼다수공장",
+        "roads": ["번영로", "동부 해안도로"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100217/0/0",
+    },
+    {
+        "id": "geumak_isidore",
+        "name": "금악이시돌목장",
+        "roads": ["애월 중산간", "평화로"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100218/0/0",
+    },
+    {
+        "id": "moseulpo_training",
+        "name": "모슬포예비군훈련장 입구",
+        "roads": ["평화로", "서귀포시내"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100219/0/0",
+    },
+    {
+        "id": "yeongsil",
+        "name": "영실",
+        "roads": ["1100도로"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100023/0/0",
+    },
+    {
+        "id": "topyeong_citrus",
+        "name": "토평감귤유통센터앞",
+        "roads": ["5.16도로", "서귀포시내"],
+        "cctv": "http://59.8.86.94:8080/media/api/v1/hls/vurix/192871/100220/0/0",
+    },
+]
 
 ROAD_LINES = [
     {
@@ -938,6 +1003,161 @@ def tourist_sorted_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]
     )
 
 
+def camera_matches_road(camera: dict[str, Any], road_name: str) -> bool:
+    return any(road in road_name or road_name in road for road in camera["roads"])
+
+
+def cctv_options_for_road(road_name: str | None) -> list[dict[str, Any]]:
+    if not road_name:
+        return CCTV_STREAMS
+
+    recommended = [
+        camera for camera in CCTV_STREAMS if camera_matches_road(camera, road_name)
+    ]
+    others = [
+        camera for camera in CCTV_STREAMS if not camera_matches_road(camera, road_name)
+    ]
+    return recommended + others
+
+
+def cctv_player_html(camera: dict[str, Any]) -> str:
+    stream_url = json.dumps(camera["cctv"])
+    title = escape(camera["name"])
+    source_page = escape(CCTV_SOURCE_PAGE, quote=True)
+    return clean_html(
+        f"""
+        <style>
+        .cctv-wrap {{
+            overflow: hidden;
+            border-radius: 8px;
+            background: #020617;
+            border: 1px solid rgba(148, 163, 184, .35);
+            font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }}
+        .cctv-bar {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 8px 10px;
+            color: #e2e8f0;
+            background: rgba(15, 23, 42, .94);
+            font-size: 13px;
+            font-weight: 800;
+        }}
+        .cctv-dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+            box-shadow: 0 0 0 5px rgba(239, 68, 68, .18);
+            flex: 0 0 auto;
+        }}
+        .cctv-title {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }}
+        .cctv-title span:last-child {{
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .cctv-source {{
+            color: #93c5fd;
+            text-decoration: none;
+            white-space: nowrap;
+            font-size: 12px;
+        }}
+        .cctv-wrap video {{
+            display: block;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #020617;
+        }}
+        .cctv-note {{
+            min-height: 30px;
+            padding: 7px 10px 9px;
+            color: #cbd5e1;
+            background: #0f172a;
+            font-size: 12px;
+            line-height: 1.45;
+        }}
+        </style>
+        <div class="cctv-wrap">
+            <div class="cctv-bar">
+                <div class="cctv-title"><span class="cctv-dot"></span><span>{title}</span></div>
+                <a class="cctv-source" href="{source_page}" target="_blank" rel="noopener">원본</a>
+            </div>
+            <video id="cctvVideo" autoplay muted controls playsinline></video>
+            <div class="cctv-note" id="cctvNote">CCTV 스트림을 불러오는 중입니다.</div>
+        </div>
+        <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+        <script>
+        (function () {{
+            const source = {stream_url};
+            const video = document.getElementById("cctvVideo");
+            const note = document.getElementById("cctvNote");
+
+            function setNote(message) {{
+                note.textContent = message;
+            }}
+
+            video.addEventListener("playing", function () {{
+                setNote("실시간 적설감시 CCTV 재생 중입니다.");
+            }});
+            video.addEventListener("error", function () {{
+                setNote("현재 CCTV 스트림을 재생할 수 없습니다. 다른 지점을 선택하거나 원본 페이지를 확인해 주세요.");
+            }});
+
+            if (window.location.protocol === "https:" && source.startsWith("http://")) {{
+                setNote("현재 앱이 HTTPS로 열려 있어 HTTP CCTV 스트림이 브라우저에서 차단될 수 있습니다. 원본 페이지 버튼을 이용해 주세요.");
+            }}
+
+            if (window.Hls && Hls.isSupported()) {{
+                const hls = new Hls({{
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                }});
+                hls.loadSource(source);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.ERROR, function (_event, data) {{
+                    if (data && data.fatal) {{
+                        setNote("CCTV 원본 서버 응답이 불안정합니다. 잠시 후 다시 시도하거나 다른 CCTV를 선택해 주세요.");
+                    }}
+                }});
+            }} else if (video.canPlayType("application/vnd.apple.mpegurl")) {{
+                video.src = source;
+            }} else {{
+                setNote("이 브라우저는 HLS 재생을 지원하지 않습니다. 원본 페이지에서 확인해 주세요.");
+            }}
+        }})();
+        </script>
+        """
+    )
+
+
+def render_cctv_panel(road_name: str | None = None, key_suffix: str = "home") -> None:
+    options = cctv_options_for_road(road_name)
+    render_html('<div class="section-label">적설감시 CCTV</div>')
+    camera_id = st.selectbox(
+        "CCTV 위치",
+        options=[camera["id"] for camera in options],
+        format_func=lambda camera_id: next(
+            camera["name"] for camera in CCTV_STREAMS if camera["id"] == camera_id
+        ),
+        label_visibility="collapsed",
+        key=f"cctv_select_{key_suffix}",
+    )
+    camera = next(camera for camera in CCTV_STREAMS if camera["id"] == camera_id)
+    st.html(cctv_player_html(camera), unsafe_allow_javascript=True)
+    if road_name and camera_matches_road(camera, road_name):
+        st.caption(f"{road_name} 주변 확인용으로 우선 추천된 CCTV입니다.")
+    else:
+        st.caption("원본 제공: 제주 재난안전대책본부 적설감시 CCTV")
+
+
 def files_to_photos(files: list[Any] | None) -> list[dict[str, str]]:
     photos: list[dict[str, str]] = []
     for file in files or []:
@@ -1638,6 +1858,7 @@ def render_report_detail(report: dict[str, Any]) -> None:
     )
 
     render_photo_gallery(report.get("photos", []))
+    render_cctv_panel(road_name=road_name, key_suffix=f"report_{report_id}")
 
     remaining = confirm_cooldown_remaining(report_id)
     if remaining:
@@ -1793,6 +2014,7 @@ def render_report_form() -> None:
 def render_idle_panel(reports: list[dict[str, Any]]) -> None:
     render_report_form()
     render_control_board(st.session_state.reports, compact=True)
+    render_cctv_panel(key_suffix="home")
     render_timeline(reports)
 
 
