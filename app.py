@@ -10,12 +10,21 @@ from typing import Any
 
 import folium
 import streamlit as st
+from folium.plugins import HeatMap
 from streamlit_folium import st_folium
 
 
 JEJU_CENTER = {"lat": 33.3798, "lng": 126.5453}
 ROAD_MATCH_THRESHOLD_KM = 4.5
 CONFIRM_COOLDOWN_HOURS = 4
+DANGER_HEAT_MAX_WEIGHT = 8.5
+DANGER_HEAT_GRADIENT = {
+    0.18: "#fee2e2",
+    0.38: "#fb923c",
+    0.62: "#ef4444",
+    0.84: "#b91c1c",
+    1.00: "#7f1d1d",
+}
 
 REPORT_TYPES = [
     {
@@ -505,7 +514,7 @@ def css() -> None:
             font-size: .76rem;
             font-weight: 900;
         }}
-        .road-card, .type-card, .timeline-card, .detail-card, .comment-card, .photo-tile {{
+        .road-card, .type-card, .timeline-card, .detail-card, .report-entry-card, .comment-card, .photo-tile {{
             background: var(--panel);
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -635,6 +644,32 @@ def css() -> None:
             padding: .85rem;
             border-left: 5px solid var(--accent);
             margin-bottom: .72rem;
+        }}
+        .report-entry-card {{
+            padding: .82rem;
+            border-left: 5px solid #dc2626;
+            margin-bottom: .62rem;
+            background:
+                linear-gradient(135deg, rgba(220, 38, 38, .12), transparent 48%),
+                var(--panel);
+        }}
+        .report-entry-kicker {{
+            color: #dc2626;
+            font-size: .72rem;
+            font-weight: 950;
+        }}
+        .report-entry-title {{
+            color: var(--text);
+            font-size: 1.08rem;
+            line-height: 1.25;
+            font-weight: 950;
+            margin-top: .12rem;
+        }}
+        .report-entry-copy {{
+            color: var(--muted);
+            font-size: .77rem;
+            line-height: 1.45;
+            margin-top: .2rem;
         }}
         .detail-head {{
             display: flex;
@@ -971,6 +1006,53 @@ def photo_count(report: dict[str, Any]) -> int:
     return total
 
 
+def report_danger_level(report: dict[str, Any]) -> int:
+    return int(TYPE_BY_ID[report["type"]]["control_level"])
+
+
+def danger_color_for_type(report_type: str) -> str:
+    type_info = TYPE_BY_ID[report_type]
+    level = int(type_info["control_level"])
+    if report_type == "cleared":
+        return "#16a34a"
+    if level >= 5:
+        return "#b91c1c"
+    if level >= 4:
+        return "#dc2626"
+    if level >= 3:
+        return "#ef4444"
+    if level >= 2:
+        return "#f97316"
+    return type_info["color"]
+
+
+def report_heat_weight(report: dict[str, Any]) -> float:
+    level = report_danger_level(report)
+    if level <= 0:
+        return 0.0
+
+    confirms = min(int(report.get("confirms", 0)), 8)
+    weight = level + confirms * 0.35
+    if report.get("verified"):
+        weight += 1.0
+    if report["type"] == "blocked":
+        weight += 1.2
+    if report["type"] == "photo":
+        weight *= 0.55
+    return weight
+
+
+def heatmap_points(reports: list[dict[str, Any]]) -> list[list[float]]:
+    points: list[list[float]] = []
+    for report in reports:
+        weight = report_heat_weight(report)
+        if weight <= 0:
+            continue
+        normalized = max(0.18, min(1.0, weight / DANGER_HEAT_MAX_WEIGHT))
+        points.append([float(report["lat"]), float(report["lng"]), normalized])
+    return points
+
+
 def status_for_related_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     if not reports:
         return {
@@ -1010,7 +1092,7 @@ def status_for_related_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "status": status,
         "label": status,
-        "color": type_info["color"] if top["type"] != "cleared" else "#16a34a",
+        "color": danger_color_for_type(top["type"]),
         "level": level,
         "desc": desc,
         "report": top,
@@ -1193,14 +1275,23 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
 
 def report_marker_html(report: dict[str, Any]) -> str:
     type_info = TYPE_BY_ID[report["type"]]
+    level = report_danger_level(report)
+    color = danger_color_for_type(report["type"])
+    size = 40 if level >= 4 else 34
+    font_size = 18 if level >= 4 else 17
+    ring = (
+        "0 0 0 9px rgba(220,38,38,.24), 0 8px 20px rgba(127,29,29,.32)"
+        if level >= 4
+        else "0 4px 12px rgba(15,23,42,.28)"
+    )
     return clean_html(
         f"""
         <div style="
-            width:34px;height:34px;border-radius:50%;
+            width:{size}px;height:{size}px;border-radius:50%;
             display:flex;align-items:center;justify-content:center;
-            background:{type_info['color']};color:white;
-            border:3px solid white;box-shadow:0 4px 12px rgba(15,23,42,.28);
-            font-size:17px;">
+            background:{color};color:white;
+            border:3px solid white;box-shadow:{ring};
+            font-size:{font_size}px;">
             {type_info['icon']}
         </div>
         """
@@ -1215,6 +1306,20 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
         tiles=tiles,
         control_scale=True,
     )
+
+    heat_data = heatmap_points(reports)
+    if heat_data:
+        HeatMap(
+            heat_data,
+            name="위험 히트맵",
+            min_opacity=0.22,
+            radius=34,
+            blur=26,
+            gradient=DANGER_HEAT_GRADIENT,
+            overlay=True,
+            control=False,
+            show=True,
+        ).add_to(fmap)
 
     for road in road_statuses(st.session_state.reports):
         folium.PolyLine(
@@ -1619,33 +1724,45 @@ def submit_report(
 
 
 def render_report_form() -> None:
-    location = st.session_state.reporting_location
-    if not location:
-        return
-
-    cancel_col, _ = st.columns([0.42, 0.58])
-    with cancel_col:
-        st.button("← 취소", use_container_width=True, on_click=close_panel)
+    location = (
+        st.session_state.reporting_location
+        or st.session_state.last_clicked_location
+        or JEJU_CENTER
+    )
+    if st.session_state.reporting_location:
+        location_source = "지도에서 선택한 위치"
+        guide = "필요하면 좌표를 조금 조정한 뒤 바로 등록하세요."
+    elif st.session_state.last_clicked_location:
+        location_source = "마지막 선택 위치"
+        guide = "지도에서 다른 지점을 누르면 좌표가 자동으로 바뀝니다."
+    else:
+        location_source = "기본 위치"
+        guide = "지도에서 위험 지점을 누르거나 좌표를 직접 입력하세요."
 
     render_html(
         f"""
-        <div class="detail-card" style="--accent:#2563eb;">
-            <div class="detail-title">새 제보 등록</div>
-            <div class="detail-meta">타임라인에 바로 추가됩니다.</div>
+        <div class="report-entry-card">
+            <div class="report-entry-kicker">가장 중요한 입력</div>
+            <div class="report-entry-title">위험 제보 바로 등록</div>
+            <div class="report-entry-copy">{escape(guide)}</div>
         </div>
-        <div class="form-location">선택 위치 · {location['lat']:.5f}, {location['lng']:.5f}</div>
+        <div class="form-location">{escape(location_source)} · {location['lat']:.5f}, {location['lng']:.5f}</div>
         """
     )
 
     nonce = st.session_state.report_photo_nonce
+    location_signature = f"{float(location['lat']):.5f}_{float(location['lng']):.5f}"
     type_ids = [item["id"] for item in REPORT_TYPES]
     vehicle_ids = [item["id"] for item in VEHICLE_TYPES]
 
-    with st.form(f"new_report_form_{nonce}"):
-        lat = st.number_input("위도", value=float(location["lat"]), format="%.5f")
-        lng = st.number_input("경도", value=float(location["lng"]), format="%.5f")
+    with st.form(f"new_report_form_{nonce}_{location_signature}"):
+        lat_col, lng_col = st.columns(2)
+        with lat_col:
+            lat = st.number_input("위도", value=float(location["lat"]), format="%.5f")
+        with lng_col:
+            lng = st.number_input("경도", value=float(location["lng"]), format="%.5f")
         report_type = st.selectbox(
-            "제보 유형",
+            "위험 유형",
             options=type_ids,
             format_func=lambda key: f"{TYPE_BY_ID[key]['icon']} {TYPE_BY_ID[key]['label']}",
         )
@@ -1665,15 +1782,16 @@ def render_report_form() -> None:
             "현장 사진",
             type=["png", "jpg", "jpeg", "webp"],
             accept_multiple_files=True,
-            key=f"report_photos_{nonce}",
+            key=f"report_photos_{nonce}_{location_signature}",
         )
-        submitted = st.form_submit_button("제보 등록", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("위험 제보 등록", type="primary", use_container_width=True)
         if submitted:
             submit_report(lat, lng, report_type, vehicle, snow, comment, photos)
             st.rerun()
 
 
 def render_idle_panel(reports: list[dict[str, Any]]) -> None:
+    render_report_form()
     render_control_board(st.session_state.reports, compact=True)
     render_timeline(reports)
 
@@ -1709,8 +1827,6 @@ def main() -> None:
         selected = current_report()
         if selected:
             render_report_detail(selected)
-        elif st.session_state.reporting_location:
-            render_report_form()
         else:
             render_idle_panel(reports)
 
