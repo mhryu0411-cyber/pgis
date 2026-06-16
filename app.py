@@ -940,16 +940,31 @@ def close_panel() -> None:
     clear_query_report_selection()
 
 
-def start_report_at(lat: float, lng: float) -> None:
-    st.session_state.reporting_location = {"lat": float(lat), "lng": float(lng)}
-    st.session_state.last_clicked_location = {"lat": float(lat), "lng": float(lng)}
+def start_report_at(
+    lat: float,
+    lng: float,
+    road_name: str | None = None,
+    road_id: str | None = None,
+) -> None:
+    location = {"lat": float(lat), "lng": float(lng)}
+    if road_name:
+        location["road_name"] = road_name
+    if road_id:
+        location["road_id"] = road_id
+    st.session_state.reporting_location = location
+    st.session_state.last_clicked_location = location
     st.session_state.selected_report_id = None
     clear_query_report_selection()
 
 
 def start_report_from_timeline() -> None:
     location = st.session_state.last_clicked_location or JEJU_CENTER
-    start_report_at(location["lat"], location["lng"])
+    start_report_at(
+        location["lat"],
+        location["lng"],
+        road_name=location.get("road_name"),
+        road_id=location.get("road_id"),
+    )
 
 
 def current_report() -> dict[str, Any] | None:
@@ -1088,6 +1103,8 @@ def load_road_geojson(
             road_class,
             road_width,
             road_length,
+            ST_Y(ST_ClosestPoint(wgs_geom, ST_Centroid(wgs_geom))) AS report_lat,
+            ST_X(ST_ClosestPoint(wgs_geom, ST_Centroid(wgs_geom))) AS report_lng,
             ST_AsGeoJSON(ST_SimplifyPreserveTopology(wgs_geom, 0.000015), 6) AS geometry
         FROM src
         WHERE NOT ST_IsEmpty(wgs_geom)
@@ -1102,7 +1119,7 @@ def load_road_geojson(
             with conn.cursor() as cursor:
                 cursor.execute(query, (source_srid, limit))
                 for row in cursor.fetchall():
-                    geometry = json.loads(row[5]) if row[5] else None
+                    geometry = json.loads(row[7]) if row[7] else None
                     if not geometry:
                         continue
                     features.append(
@@ -1115,6 +1132,8 @@ def load_road_geojson(
                                 "road_class": row[2] or "-",
                                 "width": row[3] or "-",
                                 "length": row[4] or "-",
+                                "report_lat": float(row[5]),
+                                "report_lng": float(row[6]),
                             },
                             "geometry": geometry,
                         }
@@ -1764,9 +1783,57 @@ def nearest_report_at(lat: float, lng: float, reports: list[dict[str, Any]]) -> 
     return nearest if distance < 0.35 else None
 
 
+def road_name_from_tooltip(value: Any) -> str | None:
+    if not value:
+        return None
+    text = re.sub(r"<[^>]+>", " ", str(value))
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or "확인" in text or "제보" in text:
+        return None
+    if "도로명" in text:
+        text = text.split("도로명", 1)[1].lstrip(" :")
+        for marker in ("분류", "폭", "길이"):
+            if marker in text:
+                text = text.split(marker, 1)[0].strip()
+                break
+        return text or None
+    for separator in ("·", ":", "|"):
+        if separator in text:
+            text = text.split(separator, 1)[0].strip()
+    return text or None
+
+
+def start_report_from_road_feature(feature: dict[str, Any]) -> bool:
+    props = feature.get("properties") or {}
+    road_name = props.get("name") or props.get("road_name")
+    road_id = props.get("id")
+    lat = props.get("report_lat")
+    lng = props.get("report_lng")
+    if not road_name or lat is None or lng is None:
+        return False
+
+    try:
+        lat_value = float(lat)
+        lng_value = float(lng)
+    except (TypeError, ValueError):
+        return False
+
+    signature = f"road:{road_id or road_name}:{lat_value:.6f}:{lng_value:.6f}"
+    if st.session_state.last_map_signature == signature:
+        return False
+
+    st.session_state.last_map_signature = signature
+    start_report_at(lat_value, lng_value, road_name=str(road_name), road_id=str(road_id or ""))
+    return True
+
+
 def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, Any]]) -> None:
     if not map_data:
         return
+
+    active_feature = map_data.get("last_active_drawing")
+    if isinstance(active_feature, dict) and start_report_from_road_feature(active_feature):
+        st.rerun()
 
     object_clicked = map_data.get("last_object_clicked")
     if object_clicked:
@@ -1779,6 +1846,10 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
             if report:
                 select_report(int(report["id"]))
                 st.rerun()
+            road_name = road_name_from_tooltip(map_data.get("last_object_clicked_tooltip"))
+            if road_name:
+                start_report_at(lat, lng, road_name=road_name)
+                st.rerun()
 
     clicked = map_data.get("last_clicked")
     if clicked:
@@ -1790,8 +1861,6 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
             report = nearest_report_at(lat, lng, reports)
             if report:
                 select_report(int(report["id"]))
-            else:
-                start_report_at(lat, lng)
             st.rerun()
 
 
@@ -2083,14 +2152,17 @@ def submit_report(
     snow: str,
     comment: str,
     files: list[Any] | None,
+    road_name: str | None = None,
+    road_id: str | None = None,
 ) -> None:
     if not report_type or not vehicle:
         st.warning("제보 유형과 차량 정보를 선택해 주세요.")
         return
 
-    road_name, distance = nearest_road(lat, lng)
-    if distance > ROAD_MATCH_THRESHOLD_KM:
-        road_name = "직접 지정 위치"
+    if not road_name:
+        road_name, distance = nearest_road(lat, lng)
+        if distance > ROAD_MATCH_THRESHOLD_KM:
+            road_name = "직접 지정 위치"
     new_id = max((int(report["id"]) for report in st.session_state.reports), default=0) + 1
     st.session_state.reports.append(
         {
@@ -2099,6 +2171,7 @@ def submit_report(
             "lat": float(lat),
             "lng": float(lng),
             "road": road_name,
+            "road_id": road_id,
             "vehicle": vehicle,
             "snow": None if snow == "선택 안 함" else snow,
             "comment": comment.strip() or "현장 도로 상태 제보",
@@ -2122,15 +2195,16 @@ def render_report_form() -> None:
         or st.session_state.last_clicked_location
         or JEJU_CENTER
     )
-    if st.session_state.reporting_location:
-        location_source = "지도에서 선택한 위치"
-        guide = "필요하면 좌표를 조금 조정한 뒤 바로 등록하세요."
-    elif st.session_state.last_clicked_location:
-        location_source = "마지막 선택 위치"
-        guide = "지도에서 다른 지점을 누르면 좌표가 자동으로 바뀝니다."
+    selected_road = location.get("road_name") if isinstance(location, dict) else None
+    selected_road_id = location.get("road_id") if isinstance(location, dict) else None
+    has_selected_road = bool(selected_road)
+
+    if has_selected_road:
+        location_source = "선택 도로"
+        guide = "선택한 도로의 현재 상태를 바로 제보할 수 있습니다."
     else:
-        location_source = "기본 위치"
-        guide = "지도에서 위험 지점을 누르거나 좌표를 직접 입력하세요."
+        location_source = "도로 미선택"
+        guide = "지도에서 도로 선에 마우스를 올려 이름을 확인하고, 그 도로를 클릭해 제보를 시작하세요."
 
     render_html(
         f"""
@@ -2139,21 +2213,18 @@ def render_report_form() -> None:
             <div class="report-entry-title">위험 제보 바로 등록</div>
             <div class="report-entry-copy">{escape(guide)}</div>
         </div>
-        <div class="form-location">{escape(location_source)} · {location['lat']:.5f}, {location['lng']:.5f}</div>
+        <div class="form-location">{escape(location_source)} · {escape(str(selected_road or '지도에서 도로를 클릭해 주세요'))}</div>
         """
     )
 
     nonce = st.session_state.report_photo_nonce
-    location_signature = f"{float(location['lat']):.5f}_{float(location['lng']):.5f}"
+    lat = float(location["lat"])
+    lng = float(location["lng"])
+    location_signature = f"{selected_road_id or selected_road or 'none'}_{lat:.5f}_{lng:.5f}"
     type_ids = [item["id"] for item in REPORT_TYPES]
     vehicle_ids = [item["id"] for item in VEHICLE_TYPES]
 
     with st.form(f"new_report_form_{nonce}_{location_signature}"):
-        lat_col, lng_col = st.columns(2)
-        with lat_col:
-            lat = st.number_input("위도", value=float(location["lat"]), format="%.5f")
-        with lng_col:
-            lng = st.number_input("경도", value=float(location["lng"]), format="%.5f")
         report_type = st.selectbox(
             "위험 유형",
             options=type_ids,
@@ -2177,9 +2248,25 @@ def render_report_form() -> None:
             accept_multiple_files=True,
             key=f"report_photos_{nonce}_{location_signature}",
         )
-        submitted = st.form_submit_button("위험 제보 등록", type="primary", use_container_width=True)
+        submitted = st.form_submit_button(
+            "위험 제보 등록",
+            type="primary",
+            use_container_width=True,
+            disabled=not has_selected_road,
+            help="지도에서 도로를 먼저 클릭해 주세요." if not has_selected_road else None,
+        )
         if submitted:
-            submit_report(lat, lng, report_type, vehicle, snow, comment, photos)
+            submit_report(
+                lat,
+                lng,
+                report_type,
+                vehicle,
+                snow,
+                comment,
+                photos,
+                road_name=str(selected_road) if selected_road else None,
+                road_id=str(selected_road_id) if selected_road_id else None,
+            )
             st.rerun()
 
 
@@ -2212,7 +2299,12 @@ def main() -> None:
             fmap,
             height=700,
             use_container_width=True,
-            returned_objects=["last_clicked", "last_object_clicked"],
+            returned_objects=[
+                "last_clicked",
+                "last_object_clicked",
+                "last_object_clicked_tooltip",
+                "last_active_drawing",
+            ],
             key=f"pgis_map_{st.session_state.theme_mode}",
         )
         handle_map_event(map_data, reports)
