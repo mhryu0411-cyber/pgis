@@ -8,6 +8,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from html import escape
 from math import cos, hypot, radians
+from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
@@ -18,6 +19,7 @@ from streamlit_folium import st_folium
 
 
 JEJU_CENTER = {"lat": 33.3798, "lng": 126.5453}
+APP_DIR = Path(__file__).resolve().parent
 ROAD_MATCH_THRESHOLD_KM = 4.5
 CONFIRM_COOLDOWN_HOURS = 4
 DANGER_HEAT_MAX_WEIGHT = 8.5
@@ -32,6 +34,11 @@ ROAD_DB_URL_ENV_KEYS = ("PGIS_DATABASE_URL", "DATABASE_URL", "POSTGRES_URL")
 ROAD_DB_TABLE = os.getenv("PGIS_ROAD_TABLE", "jeju_important")
 ROAD_DB_NAME_FIELD = os.getenv("PGIS_ROAD_NAME_FIELD", "rn")
 ROAD_DB_LAYER_LABEL = os.getenv("PGIS_ROAD_LAYER_LABEL", "DB 도로망")
+TERRAIN_SCORE_PATH = os.getenv(
+    "PGIS_TERRAIN_SCORE_PATH",
+    str(APP_DIR / "data" / "road_terrain_scores.json"),
+)
+TERRAIN_SCORE_MIN_DISPLAY = 25.0
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -1157,6 +1164,133 @@ def road_geojson_layer() -> tuple[dict[str, Any], str | None]:
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_terrain_scores(path: str) -> dict[str, dict[str, Any]]:
+    score_path = Path(path)
+    if not score_path.exists():
+        return {}
+
+    try:
+        payload = json.loads(score_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    roads = payload.get("roads", payload) if isinstance(payload, dict) else payload
+    if not isinstance(roads, list):
+        return {}
+
+    scores: dict[str, dict[str, Any]] = {}
+    for road in roads:
+        if not isinstance(road, dict) or not road.get("name"):
+            continue
+        scores[str(road["name"])] = road
+    return scores
+
+
+def terrain_scores() -> dict[str, dict[str, Any]]:
+    return load_terrain_scores(TERRAIN_SCORE_PATH)
+
+
+def terrain_for_road_name(road_name: str | None) -> dict[str, Any] | None:
+    if not road_name:
+        return None
+
+    scores = terrain_scores()
+    if road_name in scores:
+        return scores[road_name]
+
+    compact_name = re.sub(r"\s+", "", road_name)
+    for name, terrain in scores.items():
+        compact_candidate = re.sub(r"\s+", "", name)
+        if compact_name == compact_candidate:
+            return terrain
+    return None
+
+
+def terrain_for_report(report: dict[str, Any]) -> dict[str, Any] | None:
+    return terrain_for_road_name(report_road_name(report))
+
+
+def terrain_score_value(terrain: dict[str, Any] | None) -> float:
+    if not terrain:
+        return 0.0
+    try:
+        return max(0.0, min(100.0, float(terrain.get("terrain_ice_score", 0))))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def terrain_label_for_score(score: float) -> str:
+    if score >= 75:
+        return "매우 높음"
+    if score >= 60:
+        return "높음"
+    if score >= 40:
+        return "주의"
+    if score >= TERRAIN_SCORE_MIN_DISPLAY:
+        return "관찰"
+    return "낮음"
+
+
+def terrain_color_for_score(score: float) -> str:
+    if score >= 75:
+        return "#7f1d1d"
+    if score >= 60:
+        return "#dc2626"
+    if score >= 40:
+        return "#f97316"
+    if score >= TERRAIN_SCORE_MIN_DISPLAY:
+        return "#f59e0b"
+    return "#94a3b8"
+
+
+def format_terrain_number(value: Any, suffix: str, digits: int = 0) -> str | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f"{number:.{digits}f}{suffix}"
+
+
+def terrain_summary(terrain: dict[str, Any] | None) -> str | None:
+    score = terrain_score_value(terrain)
+    if score < TERRAIN_SCORE_MIN_DISPLAY:
+        return None
+
+    parts = [f"DEM 결빙취약 {terrain_label_for_score(score)} {score:.0f}점"]
+    elev = format_terrain_number(terrain.get("elev_p75_m"), "m")
+    slope = format_terrain_number(terrain.get("slope_p90_pct"), "%", digits=1)
+    if elev:
+        parts.append(f"고도 {elev}")
+    if slope:
+        parts.append(f"경사 {slope}")
+    return " · ".join(parts)
+
+
+def status_with_terrain(
+    status: dict[str, Any],
+    terrain: dict[str, Any] | None,
+) -> dict[str, Any]:
+    result = dict(status)
+    result["terrain"] = terrain
+    score = terrain_score_value(terrain)
+    result["terrain_score"] = score
+    summary = terrain_summary(terrain)
+    result["terrain_desc"] = summary
+
+    if not summary:
+        return result
+
+    if result["level"] <= 0 and result.get("report") is None:
+        result["status"] = "지형 취약"
+        result["label"] = "지형 취약"
+        result["color"] = terrain_color_for_score(score)
+        result["desc"] = summary
+    elif result["level"] > 0:
+        result["desc"] = f"{result['desc']} · 지형 {terrain_label_for_score(score)}"
+    return result
+
+
 def db_road_style(feature: dict[str, Any]) -> dict[str, Any]:
     props = feature.get("properties", {})
     try:
@@ -1430,6 +1564,12 @@ def report_heat_weight(report: dict[str, Any]) -> float:
         weight += 1.2
     if report["type"] == "photo":
         weight *= 0.55
+
+    terrain_score = terrain_score_value(terrain_for_report(report))
+    if terrain_score:
+        weight += min(1.3, terrain_score / 100 * 1.3)
+        if report["type"] == "blackice":
+            weight += min(0.6, terrain_score / 100 * 0.6)
     return weight
 
 
@@ -1494,7 +1634,10 @@ def road_statuses(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     statuses: list[dict[str, Any]] = []
     for road in ROAD_LINES:
         related = [report for report in reports if report_road_name(report) == road["name"]]
-        status = status_for_related_reports(related)
+        status = status_with_terrain(
+            status_for_related_reports(related),
+            terrain_for_road_name(road["name"]),
+        )
         statuses.append(
             {
                 "name": road["name"],
@@ -1514,13 +1657,29 @@ def top_control_status(reports: list[dict[str, Any]]) -> dict[str, Any]:
             item["level"],
             len(item["related"]),
             int(item["report"].get("confirms", 0)) if item["report"] else 0,
+            float(item.get("terrain_score", 0)),
         ),
     )
 
 
 def render_control_board(reports: list[dict[str, Any]], compact: bool = False) -> None:
     top = top_control_status(reports)
-    top_title = "실제 통제 없음" if top["level"] == 0 else f"{top['name']} {top['status']}"
+    terrain_score = float(top.get("terrain_score", 0))
+    if top["level"] == 0:
+        top_title = "실제 통제 없음"
+        if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+            top_desc = f"제보 기반 통제 없음 · {top['name']} {terrain_label_for_score(terrain_score)} 지형"
+            top_badge = "DEM 취약"
+            top_color = terrain_color_for_score(terrain_score)
+        else:
+            top_desc = top["desc"]
+            top_badge = top["status"]
+            top_color = top["color"]
+    else:
+        top_title = f"{top['name']} {top['status']}"
+        top_desc = top["desc"]
+        top_badge = top["status"]
+        top_color = top["color"]
     updated = datetime.now().strftime("%H:%M")
     render_html(
         f"""
@@ -1532,12 +1691,12 @@ def render_control_board(reports: list[dict[str, Any]], compact: bool = False) -
                 </div>
                 <div class="control-time">{updated}</div>
             </div>
-            <div class="control-primary" style="--status-color:{top['color']};">
+            <div class="control-primary" style="--status-color:{top_color};">
                 <div>
                     <div class="control-road">{escape(top_title)}</div>
-                    <div class="control-desc">{escape(top['desc'])}</div>
+                    <div class="control-desc">{escape(top_desc)}</div>
                 </div>
-                <span class="status-badge">{escape(top['status'])}</span>
+                <span class="status-badge">{escape(top_badge)}</span>
             </div>
         </div>
         """
@@ -1546,6 +1705,9 @@ def render_control_board(reports: list[dict[str, Any]], compact: bool = False) -
 
 def render_road_card(status: dict[str, Any]) -> str:
     count = len(status["related"])
+    meta_parts = [status["desc"], f"제보 {count}건"]
+    if count and status.get("terrain_desc"):
+        meta_parts.append(status["terrain_desc"])
     return clean_html(
         f"""
         <div class="road-card" style="--status-color:{status['color']};">
@@ -1553,7 +1715,7 @@ def render_road_card(status: dict[str, Any]) -> str:
                 <div class="road-name">{escape(status['name'])}</div>
                 <span class="status-badge" style="--status-color:{status['color']};">{escape(status['status'])}</span>
             </div>
-            <div class="road-meta">{escape(status['desc'])} · 제보 {count}건</div>
+            <div class="road-meta">{escape(' · '.join(meta_parts))}</div>
         </div>
         """
     )
@@ -1658,6 +1820,7 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
                 """
                 <div class="empty-note">
                     이 화면의 통제 판단은 시민 제보와 확인 수를 바탕으로 정리됩니다.
+                    DEM 결빙취약 표시는 30m 고도 자료에서 고도·경사·북향 사면을 요약한 보조 지표입니다.
                     실제 이동 전에는 제주 교통·재난 안내와 현장 통제 표지를 함께 확인해 주세요.
                 </div>
                 """
@@ -1730,21 +1893,41 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
         ).add_to(fmap)
 
     for road in road_statuses(st.session_state.reports):
+        terrain_score = float(road.get("terrain_score", 0))
+        line_color = road["color"]
+        line_weight = 7 if road["level"] >= 4 else 5
+        line_opacity = 0.86 if road["level"] else 0.45
+        if road["level"] == 0 and terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+            line_color = terrain_color_for_score(terrain_score)
+            line_weight = 4
+            line_opacity = 0.48 + min(0.3, terrain_score / 260)
+        tooltip = f"{road['name']} · {road['status']}"
+        if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+            tooltip = f"{tooltip} · DEM {terrain_score:.0f}점"
         folium.PolyLine(
             road["coords"],
-            color=road["color"],
-            weight=7 if road["level"] >= 4 else 5,
-            opacity=0.86 if road["level"] else 0.45,
-            tooltip=f"{road['name']} · {road['status']}",
+            color=line_color,
+            weight=line_weight,
+            opacity=line_opacity,
+            tooltip=tooltip,
         ).add_to(fmap)
 
     for report in reports:
         type_info = TYPE_BY_ID[report["type"]]
+        terrain = terrain_for_report(report)
+        terrain_line = ""
+        terrain_score = terrain_score_value(terrain)
+        if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+            terrain_line = (
+                f"DEM 결빙취약 {escape(terrain_label_for_score(terrain_score))} "
+                f"{terrain_score:.0f}점<br>"
+            )
         popup = clean_html(
             f"""
             <b>{escape(type_info['label'])}</b><br>
             {escape(report_road_name(report))}<br>
             {escape(str(report.get('comment', '')))}<br>
+            {terrain_line}
             💬 {comment_count(report)} · 📷 {photo_count(report)} · 확인 {report.get('confirms', 0)}
             """
         )
@@ -1867,6 +2050,8 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
 def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
     type_info = TYPE_BY_ID[report["type"]]
     road_name = report_road_name(report)
+    terrain = terrain_for_road_name(road_name)
+    terrain_score = terrain_score_value(terrain)
     chips = [
         f"<span class='meta-chip'>{type_info['icon']} {escape(type_info['label'])}</span>",
         f"<span class='meta-chip'>💬 {comment_count(report)}</span>",
@@ -1875,6 +2060,8 @@ def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
     ]
     if tourist_mode and TYPE_BY_ID[report["type"]]["control_level"] >= 4:
         chips.insert(0, "<span class='meta-chip'>먼저 확인</span>")
+    if terrain_score >= 60:
+        chips.append(f"<span class='meta-chip'>DEM {terrain_score:.0f}점</span>")
     return clean_html(
         f"""
         <a class="timeline-card timeline-link" href="?report={int(report['id'])}" target="_self" style="--accent:{type_info['color']};">
@@ -2052,6 +2239,13 @@ def render_report_detail(report: dict[str, Any]) -> None:
     report_id = int(report["id"])
     verified = '<span class="verified">검증됨</span>' if report.get("verified") else ""
     road_name = report_road_name(report)
+    terrain = terrain_for_road_name(road_name)
+    terrain_score = terrain_score_value(terrain)
+    terrain_chip = (
+        f"<span>DEM {terrain_label_for_score(terrain_score)} {terrain_score:.0f}점</span>"
+        if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY
+        else ""
+    )
     road_status = next(
         (item for item in road_statuses(st.session_state.reports) if item["name"] == road_name),
         None,
@@ -2093,6 +2287,7 @@ def render_report_detail(report: dict[str, Any]) -> None:
                 <span>💬 {comment_count(report)}</span>
                 <span>📷 {photo_count(report)}</span>
                 <span>확인 {int(report.get('confirms', 0))}</span>
+                {terrain_chip}
             </div>
         </div>
         """

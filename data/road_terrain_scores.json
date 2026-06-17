@@ -1,0 +1,123 @@
+{
+  "metadata": {
+    "source_dem": "jeju_dem30m.tif",
+    "crs": "EPSG:5179",
+    "pixel_size_m": 25.896,
+    "sample_m": 60.0,
+    "created_at": "2026-06-17T13:39:02.826634+00:00"
+  },
+  "roads": [
+    {
+      "name": "1100도로",
+      "sample_count": 496,
+      "elev_mean_m": 750.9,
+      "elev_p75_m": 1138.2,
+      "elev_max_m": 1657.0,
+      "slope_mean_pct": 15.54,
+      "slope_p90_pct": 30.56,
+      "northness_mean": 0.502,
+      "terrain_ice_score": 90.0,
+      "score_components": {
+        "elevation": 45.0,
+        "slope": 35.0,
+        "northness": 10.0
+      }
+    },
+    {
+      "name": "5.16도로",
+      "sample_count": 520,
+      "elev_mean_m": 494.3,
+      "elev_p75_m": 699.2,
+      "elev_max_m": 1010.0,
+      "slope_mean_pct": 13.26,
+      "slope_p90_pct": 23.35,
+      "northness_mean": 0.342,
+      "terrain_ice_score": 74.8,
+      "score_components": {
+        "elevation": 33.0,
+        "slope": 35.0,
+        "northness": 6.8
+      }
+    },
+    {
+      "name": "번영로",
+      "sample_count": 440,
+      "elev_mean_m": 368.6,
+      "elev_p75_m": 563.2,
+      "elev_max_m": 737.0,
+      "slope_mean_pct": 9.44,
+      "slope_p90_pct": 17.52,
+      "northness_mean": 0.301,
+      "terrain_ice_score": 65.8,
+      "score_components": {
+        "elevation": 24.8,
+        "slope": 35.0,
+        "northness": 6.0
+      }
+    },
+    {
+      "name": "애월 중산간",
+      "sample_count": 243,
+      "elev_mean_m": 156.7,
+      "elev_p75_m": 198.0,
+      "elev_max_m": 224.0,
+      "slope_mean_pct": 8.47,
+      "slope_p90_pct": 15.08,
+      "northness_mean": 0.546,
+      "terrain_ice_score": 46.5,
+      "score_components": {
+        "elevation": 2.9,
+        "slope": 32.7,
+        "northness": 10.9
+      }
+    },
+    {
+      "name": "제주시내",
+      "sample_count": 198,
+      "elev_mean_m": 61.8,
+      "elev_p75_m": 78.0,
+      "elev_max_m": 124.0,
+      "slope_mean_pct": 6.97,
+      "slope_p90_pct": 12.95,
+      "northness_mean": 0.534,
+      "terrain_ice_score": 38.1,
+      "score_components": {
+        "elevation": 0.0,
+        "slope": 27.4,
+        "northness": 10.7
+      }
+    },
+    {
+      "name": "서귀포시내",
+      "sample_count": 268,
+      "elev_mean_m": 86.1,
+      "elev_p75_m": 96.2,
+      "elev_max_m": 124.0,
+      "slope_mean_pct": 9.23,
+      "slope_p90_pct": 17.38,
+      "northness_mean": 0.062,
+      "terrain_ice_score": 36.2,
+      "score_components": {
+        "elevation": 0.0,
+        "slope": 35.0,
+        "northness": 1.2
+      }
+    },
+    {
+      "name": "동부 해안도로",
+      "sample_count": 512,
+      "elev_mean_m": 29.8,
+      "elev_p75_m": 46.0,
+      "elev_max_m": 94.0,
+      "slope_mean_pct": 5.13,
+      "slope_p90_pct": 9.83,
+      "northness_mean": 0.345,
+      "terrain_ice_score": 26.5,
+      "score_components": {
+        "elevation": 0.0,
+        "slope": 19.6,
+        "northness": 6.9
+      }
+    }
+  ]
+}
