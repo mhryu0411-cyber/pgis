@@ -14,13 +14,15 @@ from typing import Any
 
 import folium
 import streamlit as st
+from branca.element import MacroElement, Template
 from folium.plugins import HeatMap
 from streamlit_folium import st_folium
 
 
 JEJU_CENTER = {"lat": 33.3798, "lng": 126.5453}
 APP_DIR = Path(__file__).resolve().parent
-ROAD_MATCH_THRESHOLD_KM = 4.5
+ROAD_MATCH_THRESHOLD_KM = 1.0
+ROAD_CLICK_THRESHOLD_KM = 0.35
 CONFIRM_COOLDOWN_HOURS = 4
 DANGER_HEAT_MAX_WEIGHT = 8.5
 DANGER_HEAT_GRADIENT = {
@@ -40,6 +42,51 @@ TERRAIN_SCORE_PATH = os.getenv(
 )
 TERRAIN_SCORE_MIN_DISPLAY = 25.0
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class PrettyScaleControl(MacroElement):
+    _template = Template(
+        """
+        {% macro script(this, kwargs) %}
+        (function () {
+            const map = {{ this._parent.get_name() }};
+            if (!map || map._pgisPrettyScale) {
+                return;
+            }
+
+            const control = L.control({ position: "bottomleft" });
+            control.onAdd = function (map) {
+                const div = L.DomUtil.create("div", "pgis-scale-control");
+                div.innerHTML = `
+                    <div class="pgis-scale-top">
+                        <span>1 km</span>
+                        <strong>가까운 도로 기준</strong>
+                    </div>
+                    <div class="pgis-scale-bar">
+                        <i></i><i></i><i></i><i></i>
+                    </div>
+                `;
+                L.DomEvent.disableClickPropagation(div);
+
+                function updateScale() {
+                    const center = map.getCenter();
+                    const metersPerPixel =
+                        40075016.686 * Math.cos(center.lat * Math.PI / 180) /
+                        Math.pow(2, map.getZoom() + 8);
+                    const width = Math.max(54, Math.min(190, 1000 / metersPerPixel));
+                    div.querySelector(".pgis-scale-bar").style.width = `${width}px`;
+                }
+
+                map.on("zoomend moveend", updateScale);
+                setTimeout(updateScale, 0);
+                return div;
+            };
+            control.addTo(map);
+            map._pgisPrettyScale = control;
+        })();
+        {% endmacro %}
+        """
+    )
 
 
 def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -533,6 +580,9 @@ def css() -> None:
             background: #22c55e;
             box-shadow: 0 0 0 4px rgba(34, 197, 94, .18);
         }}
+        .status-inline {{
+            margin: .1rem 0 .65rem;
+        }}
         .section-label {{
             margin: .85rem 0 .5rem;
             color: var(--muted);
@@ -625,6 +675,32 @@ def css() -> None:
             color: var(--text);
             font-size: .88rem;
             font-weight: 850;
+        }}
+        .road-title-group {{
+            min-width: 0;
+        }}
+        .road-tags {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: .28rem;
+            margin-top: .24rem;
+        }}
+        .area-chip, .signal-chip {{
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: .13rem .34rem;
+            font-size: .66rem;
+            line-height: 1.2;
+            font-weight: 850;
+            border: 1px solid var(--border);
+            background: var(--panel-alt);
+            color: var(--muted);
+        }}
+        .signal-chip {{
+            color: var(--status-color);
+            background: color-mix(in srgb, var(--status-color) 10%, var(--panel));
+            border-color: color-mix(in srgb, var(--status-color) 30%, var(--border));
         }}
         .road-meta {{
             color: var(--muted);
@@ -729,6 +805,20 @@ def css() -> None:
             border-radius: 999px;
             background: var(--panel-alt);
             border: 1px solid var(--border);
+        }}
+        .timeline-dock {{
+            margin-top: .8rem;
+            padding-top: .75rem;
+            border-top: 1px solid var(--border);
+        }}
+        .timeline-dock-grid {{
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: .55rem;
+        }}
+        .timeline-dock .timeline-card {{
+            margin-bottom: 0;
+            min-height: 8.2rem;
         }}
 
         .detail-card {{
@@ -882,12 +972,17 @@ def css() -> None:
         }}
         .st-key-theme_light_sidebar button,
         .st-key-theme_dark_sidebar button {{
-            min-height: 2rem;
-            padding: .18rem .36rem;
+            min-height: 2.05rem;
+            width: 2.05rem;
+            padding: 0;
+            border-radius: 999px;
             font-size: .9rem;
+            line-height: 1;
+            box-shadow: none;
         }}
         @media (max-width: 900px) {{
             .photo-grid {{ grid-template-columns: 1fr; }}
+            .timeline-dock-grid {{ grid-template-columns: 1fr; }}
         }}
         </style>
         """
@@ -1297,15 +1392,22 @@ def db_road_style(feature: dict[str, Any]) -> dict[str, Any]:
         width = float(props.get("width") or 0)
     except (TypeError, ValueError):
         width = 0
+    color = str(props.get("status_color") or "#475569")
+    opacity = 0.64 if props.get("status_color") else 0.34
     return {
-        "color": "#475569",
-        "weight": 3.0 if width >= 20 else 2.2 if width >= 10 else 1.4,
-        "opacity": 0.42,
+        "color": color,
+        "weight": 3.6 if width >= 20 else 2.8 if width >= 10 else 1.8,
+        "opacity": opacity,
     }
 
 
 def db_road_highlight(feature: dict[str, Any]) -> dict[str, Any]:
-    return {"color": "#0f766e", "weight": 5, "opacity": 0.9}
+    props = feature.get("properties", {})
+    return {
+        "color": str(props.get("status_color") or "#0f766e"),
+        "weight": 6,
+        "opacity": 0.92,
+    }
 
 
 def camera_matches_road(camera: dict[str, Any], road_name: str) -> bool:
@@ -1649,6 +1751,188 @@ def road_statuses(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return statuses
 
 
+def compact_road_text(value: str | None) -> str:
+    if not value:
+        return ""
+    return re.sub(r"[\s.\-_/·]+", "", value).lower()
+
+
+def road_name_matches(candidate: str | None, road: dict[str, Any]) -> bool:
+    compact_candidate = compact_road_text(candidate)
+    if not compact_candidate:
+        return False
+    names = [road["name"], *road.get("aliases", [])]
+    for name in names:
+        compact_name = compact_road_text(str(name))
+        if compact_name and (compact_name in compact_candidate or compact_candidate in compact_name):
+            return True
+    return False
+
+
+def matching_status_for_road_name(
+    road_name: str | None,
+    statuses: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    if not road_name:
+        return None
+    statuses = statuses or road_statuses(st.session_state.get("reports", []))
+    by_name = {status["name"]: status for status in statuses}
+    if road_name in by_name:
+        return by_name[road_name]
+    for road in ROAD_LINES:
+        if road_name_matches(road_name, road):
+            return by_name.get(road["name"])
+    return None
+
+
+def road_area_label(road_name: str) -> str:
+    if "제주시내" in road_name:
+        return "제주시권"
+    if "서귀포" in road_name:
+        return "서귀포권"
+    if "1100" in road_name or "5.16" in road_name:
+        return "남북 연결"
+    if "번영" in road_name:
+        return "동부 연결"
+    if "애월" in road_name or "중산간" in road_name:
+        return "서부 중산간"
+    if "해안" in road_name:
+        return "해안권"
+    return "주요 도로"
+
+
+def road_signal_label(status: dict[str, Any]) -> str:
+    count = len(status["related"])
+    if status["level"] >= 4:
+        return "통제 우선"
+    if count >= 2 or (status.get("report") and int(status["report"].get("confirms", 0)) >= 4):
+        return "제보 많음"
+    if status["level"] > 0:
+        return "주의"
+    if float(status.get("terrain_score", 0)) >= 40:
+        return "지형 취약"
+    return "관찰"
+
+
+def visible_road_statuses(statuses: list[dict[str, Any]], filter_name: str) -> list[dict[str, Any]]:
+    visible = [
+        status
+        for status in statuses
+        if status["related"] or status["level"] > 0 or float(status.get("terrain_score", 0)) >= 40
+    ]
+    if filter_name == "통제":
+        visible = [status for status in visible if status["level"] >= 4]
+    elif filter_name == "주의":
+        visible = [
+            status
+            for status in visible
+            if 0 < status["level"] < 4 or float(status.get("terrain_score", 0)) >= 40
+        ]
+    elif filter_name == "제보많음":
+        visible = [
+            status
+            for status in visible
+            if len(status["related"]) >= 2
+            or (status.get("report") and int(status["report"].get("confirms", 0)) >= 4)
+        ]
+    elif filter_name == "연결축":
+        visible = [
+            status
+            for status in visible
+            if "연결" in road_area_label(status["name"]) or "중산간" in road_area_label(status["name"])
+        ]
+    return sorted(
+        visible,
+        key=lambda item: (
+            item["level"],
+            len(item["related"]),
+            float(item.get("terrain_score", 0)),
+        ),
+        reverse=True,
+    )
+
+
+def enrich_road_geojson(
+    geojson: dict[str, Any],
+    statuses: list[dict[str, Any]],
+) -> dict[str, Any]:
+    enriched = deepcopy(geojson)
+    for feature in enriched.get("features", []):
+        props = feature.setdefault("properties", {})
+        status = matching_status_for_road_name(str(props.get("name", "")), statuses)
+        if status:
+            count = len(status["related"])
+            terrain_score = float(status.get("terrain_score", 0))
+            props["area"] = road_area_label(status["name"])
+            props["status"] = status["status"]
+            props["status_color"] = status["color"]
+            props["report_summary"] = f"제보 {count}건" if count else "-"
+            props["terrain_summary"] = (
+                f"DEM {terrain_score:.0f}점"
+                if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY
+                else "-"
+            )
+        else:
+            props["area"] = "도로망"
+            props["status"] = "도로 선택"
+            props["status_color"] = ""
+            props["report_summary"] = "-"
+            props["terrain_summary"] = "-"
+    return enriched
+
+
+def geojson_line_parts(geometry: dict[str, Any] | None) -> list[list[list[float]]]:
+    if not geometry:
+        return []
+    geom_type = geometry.get("type")
+    coords = geometry.get("coordinates") or []
+    if geom_type == "LineString":
+        return [coords]
+    if geom_type == "MultiLineString":
+        return coords
+    if geom_type == "GeometryCollection":
+        parts: list[list[list[float]]] = []
+        for child in geometry.get("geometries", []):
+            parts.extend(geojson_line_parts(child))
+        return parts
+    return []
+
+
+def geojson_feature_distance_km(lat: float, lng: float, feature: dict[str, Any]) -> float:
+    best = float("inf")
+    for part in geojson_line_parts(feature.get("geometry")):
+        for idx in range(len(part) - 1):
+            start = [float(part[idx][1]), float(part[idx][0])]
+            end = [float(part[idx + 1][1]), float(part[idx + 1][0])]
+            best = min(best, point_to_segment_distance_km(lat, lng, start, end))
+    return best
+
+
+def nearest_interactive_road(lat: float, lng: float) -> dict[str, Any] | None:
+    db_roads, _db_road_error = road_geojson_layer()
+    best_feature: dict[str, Any] | None = None
+    best_distance = float("inf")
+
+    for feature in db_roads.get("features", []):
+        distance = geojson_feature_distance_km(lat, lng, feature)
+        if distance < best_distance:
+            best_feature = feature
+            best_distance = distance
+
+    if best_feature and best_distance <= ROAD_CLICK_THRESHOLD_KM:
+        props = best_feature.get("properties", {})
+        return {
+            "name": str(props.get("name") or "선택 도로"),
+            "id": str(props.get("id") or ""),
+            "distance": best_distance,
+        }
+
+    fallback_name, fallback_distance = nearest_road(lat, lng)
+    if fallback_distance <= ROAD_CLICK_THRESHOLD_KM:
+        return {"name": fallback_name, "id": "", "distance": fallback_distance}
+    return None
+
+
 def top_control_status(reports: list[dict[str, Any]]) -> dict[str, Any]:
     statuses = road_statuses(reports)
     return max(
@@ -1705,20 +1989,46 @@ def render_control_board(reports: list[dict[str, Any]], compact: bool = False) -
 
 def render_road_card(status: dict[str, Any]) -> str:
     count = len(status["related"])
-    meta_parts = [status["desc"], f"제보 {count}건"]
+    area = road_area_label(status["name"])
+    signal = road_signal_label(status)
+    meta_parts = [status["desc"]]
+    if count:
+        meta_parts.append(f"제보 {count}건")
     if count and status.get("terrain_desc"):
         meta_parts.append(status["terrain_desc"])
     return clean_html(
         f"""
         <div class="road-card" style="--status-color:{status['color']};">
             <div class="road-row">
-                <div class="road-name">{escape(status['name'])}</div>
+                <div class="road-title-group">
+                    <div class="road-name">{escape(status['name'])}</div>
+                    <div class="road-tags">
+                        <span class="area-chip">{escape(area)}</span>
+                        <span class="signal-chip">{escape(signal)}</span>
+                    </div>
+                </div>
                 <span class="status-badge" style="--status-color:{status['color']};">{escape(status['status'])}</span>
             </div>
             <div class="road-meta">{escape(' · '.join(meta_parts))}</div>
         </div>
         """
     )
+
+
+def render_road_status_overview(reports: list[dict[str, Any]]) -> None:
+    statuses = road_statuses(reports)
+    selected_filter = st.radio(
+        "도로 상태 분류",
+        options=["문제/제보", "통제", "주의", "제보많음", "연결축"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="road_status_filter",
+    )
+    cards = [render_road_card(item) for item in visible_road_statuses(statuses, selected_filter)]
+    if cards:
+        render_html("".join(cards))
+    else:
+        render_html('<div class="empty-note">현재 선택한 분류에 표시할 도로가 없습니다.</div>')
 
 
 def render_type_overview(reports: list[dict[str, Any]]) -> None:
@@ -1757,10 +2067,17 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
                     <div class="brand-sub">참여형 도로 통제·위험 제보</div>
                 </div>
             </div>
-            <div class="live-pill"><span class="live-dot"></span><span>표시 {len(reports)}건 · 전체 {len(control_reports)}건</span></div>
             """
         )
-        theme_col_light, theme_col_dark, _theme_spacer = st.columns([0.18, 0.18, 0.64])
+        status_col, theme_col_light, theme_col_dark = st.columns([0.72, 0.14, 0.14], gap="small")
+        with status_col:
+            render_html(
+                f"""
+                <div class="status-inline">
+                    <div class="live-pill"><span class="live-dot"></span><span>표시 {len(reports)}건 · 전체 {len(control_reports)}건</span></div>
+                </div>
+                """
+            )
         with theme_col_light:
             st.button(
                 "☀️",
@@ -1785,7 +2102,7 @@ def render_sidebar(reports: list[dict[str, Any]]) -> None:
         with status_tab:
             render_control_board(control_reports, compact=True)
             render_html('<div class="section-label">주요 도로별 상태</div>')
-            render_html("".join(render_road_card(item) for item in road_statuses(control_reports)))
+            render_road_status_overview(control_reports)
             render_html('<div class="section-label">제보 유형</div>')
             render_type_overview(reports)
 
@@ -1852,25 +2169,97 @@ def report_marker_html(report: dict[str, Any]) -> str:
     )
 
 
+def add_map_chrome(fmap: folium.Map) -> None:
+    fmap.get_root().html.add_child(
+        folium.Element(
+            """
+            <style>
+            .leaflet-control-zoom {
+                border: 0 !important;
+                box-shadow: 0 10px 28px rgba(15, 23, 42, .20) !important;
+            }
+            .leaflet-control-zoom a {
+                width: 34px !important;
+                height: 34px !important;
+                line-height: 32px !important;
+                border: 1px solid rgba(148, 163, 184, .45) !important;
+                color: #0f172a !important;
+                font-weight: 900 !important;
+            }
+            .leaflet-control-zoom-in {
+                border-radius: 8px 8px 0 0 !important;
+            }
+            .leaflet-control-zoom-out {
+                border-radius: 0 0 8px 8px !important;
+            }
+            .pgis-scale-control {
+                padding: 8px 10px;
+                border-radius: 8px;
+                background: rgba(255, 255, 255, .94);
+                border: 1px solid rgba(148, 163, 184, .45);
+                box-shadow: 0 10px 28px rgba(15, 23, 42, .18);
+                color: #0f172a;
+                font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            }
+            .pgis-scale-top {
+                display: flex;
+                justify-content: space-between;
+                gap: 12px;
+                align-items: center;
+                font-size: 11px;
+                font-weight: 900;
+                margin-bottom: 5px;
+            }
+            .pgis-scale-top strong {
+                color: #64748b;
+                font-size: 10px;
+            }
+            .pgis-scale-bar {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                height: 8px;
+                overflow: hidden;
+                border-radius: 999px;
+                border: 1px solid rgba(15, 23, 42, .28);
+                background: #fff;
+            }
+            .pgis-scale-bar i:nth-child(odd) { background: #0f172a; }
+            .pgis-scale-bar i:nth-child(even) { background: #f8fafc; }
+            </style>
+            """
+        )
+    )
+    fmap.add_child(PrettyScaleControl())
+
+
 def build_map(reports: list[dict[str, Any]]) -> folium.Map:
     tiles = "CartoDB positron" if st.session_state.theme_mode == "light" else "CartoDB dark_matter"
     fmap = folium.Map(
         location=[JEJU_CENTER["lat"], JEJU_CENTER["lng"]],
-        zoom_start=10,
+        zoom_start=11,
         tiles=tiles,
-        control_scale=True,
+        control_scale=False,
+        zoom_snap=0.25,
+        zoom_delta=0.25,
+        wheel_px_per_zoom_level=180,
+        prefer_canvas=True,
     )
+    add_map_chrome(fmap)
 
     db_roads, db_road_error = road_geojson_layer()
     if db_roads["features"]:
-        folium.GeoJson(
+        styled_db_roads = enrich_road_geojson(
             db_roads,
+            road_statuses(st.session_state.reports),
+        )
+        folium.GeoJson(
+            styled_db_roads,
             name=ROAD_DB_LAYER_LABEL,
             style_function=db_road_style,
             highlight_function=db_road_highlight,
             tooltip=folium.GeoJsonTooltip(
-                fields=["name", "road_class", "width", "length"],
-                aliases=["도로명", "분류", "폭", "길이"],
+                fields=["name", "area", "status", "report_summary", "terrain_summary"],
+                aliases=["도로명", "구분", "상태", "제보", "지형"],
                 sticky=True,
                 localize=True,
             ),
@@ -1892,25 +2281,26 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
             show=True,
         ).add_to(fmap)
 
-    for road in road_statuses(st.session_state.reports):
-        terrain_score = float(road.get("terrain_score", 0))
-        line_color = road["color"]
-        line_weight = 7 if road["level"] >= 4 else 5
-        line_opacity = 0.86 if road["level"] else 0.45
-        if road["level"] == 0 and terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
-            line_color = terrain_color_for_score(terrain_score)
-            line_weight = 4
-            line_opacity = 0.48 + min(0.3, terrain_score / 260)
-        tooltip = f"{road['name']} · {road['status']}"
-        if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
-            tooltip = f"{tooltip} · DEM {terrain_score:.0f}점"
-        folium.PolyLine(
-            road["coords"],
-            color=line_color,
-            weight=line_weight,
-            opacity=line_opacity,
-            tooltip=tooltip,
-        ).add_to(fmap)
+    if not db_roads["features"]:
+        for road in road_statuses(st.session_state.reports):
+            terrain_score = float(road.get("terrain_score", 0))
+            line_color = road["color"]
+            line_weight = 7 if road["level"] >= 4 else 5
+            line_opacity = 0.86 if road["level"] else 0.45
+            if road["level"] == 0 and terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+                line_color = terrain_color_for_score(terrain_score)
+                line_weight = 4
+                line_opacity = 0.48 + min(0.3, terrain_score / 260)
+            tooltip = f"{road['name']} · {road['status']}"
+            if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+                tooltip = f"{tooltip} · DEM {terrain_score:.0f}점"
+            folium.PolyLine(
+                road["coords"],
+                color=line_color,
+                weight=line_weight,
+                opacity=line_opacity,
+                tooltip=tooltip,
+            ).add_to(fmap)
 
     for report in reports:
         type_info = TYPE_BY_ID[report["type"]]
@@ -2033,6 +2423,10 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
             if road_name:
                 start_report_at(lat, lng, road_name=road_name)
                 st.rerun()
+            road = nearest_interactive_road(lat, lng)
+            if road:
+                start_report_at(lat, lng, road_name=road["name"], road_id=road["id"])
+                st.rerun()
 
     clicked = map_data.get("last_clicked")
     if clicked:
@@ -2044,7 +2438,11 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
             report = nearest_report_at(lat, lng, reports)
             if report:
                 select_report(int(report["id"]))
-            st.rerun()
+                st.rerun()
+            road = nearest_interactive_road(lat, lng)
+            if road:
+                start_report_at(lat, lng, road_name=road["name"], road_id=road["id"])
+                st.rerun()
 
 
 def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
@@ -2076,20 +2474,26 @@ def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
     )
 
 
-def render_timeline(reports: list[dict[str, Any]]) -> None:
+def render_timeline(reports: list[dict[str, Any]], docked: bool = False) -> None:
     tourist_mode = st.session_state.tourist_mode
     panel_reports = tourist_sorted_reports(reports) if tourist_mode else recent_sorted_reports(reports)
     title = "통제 우선 타임라인" if tourist_mode else "최근 제보 타임라인"
+    wrap_class = "timeline-dock" if docked else "timeline-panel"
 
     render_html(
         f"""
-        <div class="timeline-head">
-            <div class="timeline-title">{title}</div>
+        <div class="{wrap_class}">
+            <div class="timeline-head">
+                <div class="timeline-title">{title}</div>
+            </div>
         </div>
         """
     )
 
-    add_col, mode_col = st.columns([0.38, 0.62])
+    if docked:
+        add_col, mode_col, _spacer_col = st.columns([0.16, 0.18, 0.66])
+    else:
+        add_col, mode_col = st.columns([0.38, 0.62])
     with add_col:
         st.button(
             "＋ 제보",
@@ -2109,8 +2513,12 @@ def render_timeline(reports: list[dict[str, Any]]) -> None:
         render_html('<div class="empty-note">선택한 필터에 표시할 제보가 없습니다.</div>')
         return
 
-    for report in panel_reports[:8]:
-        render_html(timeline_card(report, tourist_mode=tourist_mode))
+    limit = 6 if docked else 8
+    cards = "".join(timeline_card(report, tourist_mode=tourist_mode) for report in panel_reports[:limit])
+    if docked:
+        render_html(f'<div class="timeline-dock-grid">{cards}</div>')
+    else:
+        render_html(cards)
 
 
 def render_photo_gallery(photos: list[dict[str, str]]) -> None:
@@ -2469,7 +2877,6 @@ def render_idle_panel(reports: list[dict[str, Any]]) -> None:
     render_report_form()
     render_control_board(st.session_state.reports, compact=True)
     render_cctv_panel(key_suffix="home")
-    render_timeline(reports)
 
 
 def main() -> None:
@@ -2486,13 +2893,13 @@ def main() -> None:
     reports = filtered_reports()
     render_sidebar(reports)
 
-    main_col, panel_col = st.columns([0.70, 0.30], gap="medium")
+    main_col, panel_col = st.columns([0.74, 0.26], gap="medium")
 
     with main_col:
         fmap = build_map(reports)
         map_data = st_folium(
             fmap,
-            height=700,
+            height=760,
             use_container_width=True,
             returned_objects=[
                 "last_clicked",
@@ -2503,6 +2910,7 @@ def main() -> None:
             key=f"pgis_map_{st.session_state.theme_mode}",
         )
         handle_map_event(map_data, reports)
+        render_timeline(reports, docked=True)
 
     with panel_col:
         selected = current_report()
