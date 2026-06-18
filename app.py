@@ -2061,8 +2061,29 @@ def cctv_player_html(camera: dict[str, Any]) -> str:
                 setNote("현재 CCTV 스트림을 재생할 수 없습니다. 다른 지점을 선택하거나 원본 페이지를 확인해 주세요.");
             }});
 
-            if (window.location.protocol === "https:" && source.startsWith("http://")) {{
-                setNote("현재 앱이 HTTPS로 열려 있어 HTTP CCTV 스트림이 브라우저에서 차단될 수 있습니다. 원본 페이지 버튼을 이용해 주세요.");
+            function parentUsesHttps() {{
+                try {{
+                    if (window.top && window.top.location.protocol === "https:") {{
+                        return true;
+                    }}
+                }} catch (_error) {{
+                    // Cross-origin iframe access can fail; use browser-provided origins below.
+                }}
+                const ancestor = window.location.ancestorOrigins
+                    ? window.location.ancestorOrigins[0] || ""
+                    : "";
+                return (
+                    window.location.protocol === "https:" ||
+                    document.referrer.startsWith("https://") ||
+                    ancestor.startsWith("https://")
+                );
+            }}
+
+            if (parentUsesHttps() && source.startsWith("http://")) {{
+                video.removeAttribute("src");
+                video.style.display = "none";
+                setNote("CCTV 원본이 HTTP로만 제공되어 HTTPS 앱에서는 재생할 수 없습니다. 원본 버튼에서 확인해 주세요.");
+                return;
             }}
 
             if (window.Hls && Hls.isSupported()) {{
@@ -2202,7 +2223,10 @@ def asos_condition_meta(observation: dict[str, Any]) -> tuple[str, str]:
 
 @st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
 def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
-    end_day = datetime.now(ZoneInfo("Asia/Seoul")).date() - timedelta(days=1)
+    now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    # The official guide says D-1 observations become available after 11:00 KST.
+    data_delay_days = 1 if now_kst.hour >= 11 else 2
+    end_day = now_kst.date() - timedelta(days=data_delay_days)
     start_day = end_day - timedelta(days=2)
     params = {
         "serviceKey": service_key,
@@ -2259,7 +2283,8 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
     header = api_response.get("header", {}) if isinstance(api_response, dict) else {}
     result_code = str(header.get("resultCode", "")).strip()
     result_message = str(header.get("resultMsg", "")).strip()
-    if result_code != "00":
+    # The guide uses both "00" (table) and "0" (response example) for success.
+    if result_code not in {"0", "00"}:
         return {
             "ok": False,
             "error_code": result_code or "INVALID_RESPONSE",
@@ -2296,7 +2321,7 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
 def asos_error_detail(result: dict[str, Any]) -> str:
     code = str(result.get("error_code", "UNKNOWN"))
     message = str(result.get("error_message", "")).strip()
-    if code in {"HTTP_401", "HTTP_403", "20", "30"}:
+    if code in {"HTTP_401", "HTTP_403", "20", "30", "31", "32", "33"}:
         return (
             f"인증키가 거부되었습니다({code}). Railway 변수명을 "
             "KMA_ASOS_SERVICE_KEY로 지정하고 값의 따옴표를 제거한 뒤 재배포해 주세요."
@@ -2305,6 +2330,10 @@ def asos_error_detail(result: dict[str, Any]) -> str:
         return f"API 호출 한도를 초과했거나 키가 일시 정지되었습니다({code})."
     if code in {"10", "11"}:
         return f"기상청 요청값 오류입니다({code}). {message}"
+    if code in {"01", "02", "04", "05", "12", "99"}:
+        return f"기상청 서비스 오류입니다({code}). {message}"
+    if code == "03":
+        return "조회 기간에 제공 가능한 ASOS 시간자료가 없습니다(03)."
     if code == "NO_DATA":
         return message
     if code == "TIMEOUT":
