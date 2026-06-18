@@ -30,8 +30,9 @@ KMA_ASOS_API_URL = (
 KMA_ASOS_STATION_ID = os.getenv("KMA_ASOS_STATION_ID", "184")
 KMA_ASOS_STATION_NAME = os.getenv("KMA_ASOS_STATION_NAME", "제주")
 WEATHER_REFRESH_SECONDS = 15 * 60
-WEATHER_WINDOW_HOURS = 5
-WEATHER_QUERY_LOOKBACK_DAYS = 3
+WEATHER_WINDOW_HOURS = 6
+WEATHER_RECENT_LOOKBACK_HOURS = 12
+WEATHER_FALLBACK_DAY_COUNT = 3
 OTHER_ROAD_NAME = "기타도로"
 APP_DIR = Path(__file__).resolve().parent
 ROAD_MATCH_THRESHOLD_KM = 1.0
@@ -2530,38 +2531,55 @@ def asos_condition_meta(observation: dict[str, Any]) -> tuple[str, str]:
     return "흐림", "☁️"
 
 
-@st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
-def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
-    now_kst = datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
-    query_start = now_kst - timedelta(days=WEATHER_QUERY_LOOKBACK_DAYS)
-    params = {
+def asos_query_windows(now_kst: datetime) -> list[dict[str, Any]]:
+    hour_floor = now_kst.replace(minute=0, second=0, microsecond=0)
+    recent_end = hour_floor - timedelta(hours=1)
+    recent_start = recent_end - timedelta(hours=WEATHER_RECENT_LOOKBACK_HOURS - 1)
+    windows = [
+        {
+            "label": "최근 관측",
+            "start": recent_start,
+            "end": recent_end,
+            "num_rows": max(24, WEATHER_RECENT_LOOKBACK_HOURS * 2),
+        }
+    ]
+
+    first_available_offset = 1 if now_kst.hour >= 11 else 2
+    for offset in range(
+        first_available_offset,
+        first_available_offset + WEATHER_FALLBACK_DAY_COUNT,
+    ):
+        day_start = (hour_floor - timedelta(days=offset)).replace(hour=0)
+        windows.append(
+            {
+                "label": f"{offset}일 전 제공자료",
+                "start": day_start,
+                "end": day_start.replace(hour=23),
+                "num_rows": 24,
+            }
+        )
+    return windows
+
+
+def asos_request_params(service_key: str, window: dict[str, Any]) -> dict[str, Any]:
+    start = window["start"]
+    end = window["end"]
+    return {
         "serviceKey": service_key,
         "pageNo": 1,
-        "numOfRows": 96,
+        "numOfRows": int(window["num_rows"]),
         "dataType": "JSON",
         "dataCd": "ASOS",
         "dateCd": "HR",
-        "startDt": query_start.strftime("%Y%m%d"),
-        "startHh": "00",
-        "endDt": now_kst.strftime("%Y%m%d"),
-        "endHh": now_kst.strftime("%H"),
+        "startDt": start.strftime("%Y%m%d"),
+        "startHh": start.strftime("%H"),
+        "endDt": end.strftime("%Y%m%d"),
+        "endHh": end.strftime("%H"),
         "stnIds": KMA_ASOS_STATION_ID,
     }
-    try:
-        response = requests.get(KMA_ASOS_API_URL, params=params, timeout=8)
-    except requests.Timeout:
-        return {
-            "ok": False,
-            "error_code": "TIMEOUT",
-            "error_message": "기상청 API 응답 시간이 초과되었습니다.",
-        }
-    except requests.RequestException:
-        return {
-            "ok": False,
-            "error_code": "NETWORK",
-            "error_message": "기상청 API에 연결하지 못했습니다.",
-        }
 
+
+def parse_asos_response(response: requests.Response) -> dict[str, Any]:
     if response.status_code != 200:
         return {
             "ok": False,
@@ -2589,7 +2607,6 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
     header = api_response.get("header", {}) if isinstance(api_response, dict) else {}
     result_code = str(header.get("resultCode", "")).strip()
     result_message = str(header.get("resultMsg", "")).strip()
-    # The guide uses both "00" (table) and "0" (response example) for success.
     if result_code not in {"0", "00"}:
         return {
             "ok": False,
@@ -2608,24 +2625,74 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
             "error_code": "INVALID_ITEMS",
             "error_message": "시간자료 목록 형식이 올바르지 않습니다.",
         }
-
-    observations = [item for item in items if isinstance(item, dict)]
-    observations.sort(key=lambda item: parse_asos_time(item.get("tm")) or datetime.min)
-    if not observations:
-        return {
-            "ok": False,
-            "error_code": "NO_DATA",
-            "error_message": (
-                f"{query_start:%Y-%m-%d}~{now_kst:%Y-%m-%d %H시} "
-                "관측자료가 없습니다."
-            ),
-        }
-
     return {
         "ok": True,
-        "items": observations[-WEATHER_WINDOW_HOURS:],
-        "query_start": query_start.isoformat(timespec="minutes"),
-        "query_end": now_kst.isoformat(timespec="minutes"),
+        "items": [item for item in items if isinstance(item, dict)],
+    }
+
+
+@st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
+def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
+    now_kst = datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+    last_empty_result: dict[str, Any] | None = None
+
+    for window in asos_query_windows(now_kst):
+        params = asos_request_params(service_key, window)
+        try:
+            response = requests.get(KMA_ASOS_API_URL, params=params, timeout=8)
+        except requests.Timeout:
+            return {
+                "ok": False,
+                "error_code": "TIMEOUT",
+                "error_message": "기상청 API 응답 시간이 초과되었습니다.",
+            }
+        except requests.RequestException:
+            return {
+                "ok": False,
+                "error_code": "NETWORK",
+                "error_message": "기상청 API에 연결하지 못했습니다.",
+            }
+
+        parsed = parse_asos_response(response)
+        if not parsed.get("ok"):
+            if str(parsed.get("error_code")) == "03":
+                last_empty_result = {
+                    **parsed,
+                    "error_message": (
+                        f"{window['label']} "
+                        f"{window['start']:%Y-%m-%d %H시}~{window['end']:%Y-%m-%d %H시} "
+                        "관측자료가 없습니다."
+                    ),
+                }
+                continue
+            return parsed
+
+        observations = parsed["items"]
+        observations.sort(key=lambda item: parse_asos_time(item.get("tm")) or datetime.min)
+        if not observations:
+            last_empty_result = {
+                "ok": False,
+                "error_code": "NO_DATA",
+                "error_message": (
+                    f"{window['label']} "
+                    f"{window['start']:%Y-%m-%d %H시}~{window['end']:%Y-%m-%d %H시} "
+                    "관측자료가 없습니다."
+                ),
+            }
+            continue
+
+        return {
+            "ok": True,
+            "items": observations[-WEATHER_WINDOW_HOURS:],
+            "query_start": window["start"].isoformat(timespec="minutes"),
+            "query_end": window["end"].isoformat(timespec="minutes"),
+            "source_label": window["label"],
+        }
+
+    return last_empty_result or {
+        "ok": False,
+        "error_code": "NO_DATA",
+        "error_message": "기상청 ASOS 조회 구간에서 관측자료를 찾지 못했습니다.",
     }
 
 
@@ -2691,6 +2758,7 @@ def render_weather_panel() -> None:
 
     observations = weather["items"]
     latest = observations[-1]
+    source_label = str(weather.get("source_label") or "최신 제공 관측")
     station_name = str(latest.get("stnNm") or KMA_ASOS_STATION_NAME)
     observed = parse_asos_time(latest.get("tm"))
     observed_text = observed.strftime("%m/%d %H:%M") if observed else str(latest.get("tm") or "-")
@@ -2752,7 +2820,7 @@ def render_weather_panel() -> None:
             </div>
             <div class="weather-summary">
                 <div class="weather-summary-pill {observation_class}">
-                    <span>최근 제공 {WEATHER_WINDOW_HOURS}시간 기온</span>
+                    <span>{escape(source_label)} {WEATHER_WINDOW_HOURS}개 시간 기온</span>
                     <strong>{escape(temperature_range)}</strong>
                 </div>
                 <div class="weather-summary-pill {observation_class}">
@@ -2767,7 +2835,7 @@ def render_weather_panel() -> None:
                 <div class="weather-th">적설</div>
                 {row_html}
             </div>
-            <div class="weather-source">기상청 ASOS 시간자료 · 최신 제공 관측 {WEATHER_WINDOW_HOURS}개 시간만 표시 · 15분 캐시</div>
+            <div class="weather-source">기상청 ASOS 시간자료 · {escape(source_label)} 기준 {WEATHER_WINDOW_HOURS}개 시간 표시 · 15분 캐시</div>
         </div>
         """
     )
@@ -3555,25 +3623,83 @@ def add_map_chrome(fmap: folium.Map) -> None:
     fmap.add_child(ResponsiveMapInteraction())
 
 
+def add_base_tile(fmap: folium.Map) -> None:
+    is_light = st.session_state.theme_mode == "light"
+    tile_style = "light_all" if is_light else "dark_all"
+    folium.TileLayer(
+        tiles=f"https://{{s}}.basemaps.cartocdn.com/{tile_style}/{{z}}/{{x}}/{{y}}{{r}}.png",
+        attr='&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap contributors',
+        name="기본 지도",
+        max_zoom=19,
+        control=False,
+    ).add_to(fmap)
+
+
+def add_major_road_status_lines(
+    fmap: folium.Map,
+    statuses: list[dict[str, Any]],
+) -> None:
+    is_light = st.session_state.theme_mode == "light"
+    line_group = folium.FeatureGroup(
+        name="주요 도로 상태선",
+        overlay=True,
+        control=True,
+        show=True,
+    )
+    casing_color = "#0f172a" if is_light else "#ffffff"
+
+    for road in statuses:
+        terrain_score = float(road.get("terrain_score", 0))
+        line_color = road["color"]
+        line_weight = 8 if road["level"] >= 4 else 6 if road["level"] > 0 else 4
+        line_opacity = 0.92 if road["level"] else 0.52
+        if road["level"] == 0 and terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+            line_color = terrain_color_for_score(terrain_score)
+            line_weight = 5
+            line_opacity = 0.58 + min(0.28, terrain_score / 260)
+
+        tooltip = f"{road['name']} · {road['status']}"
+        if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+            tooltip = f"{tooltip} · DEM {terrain_score:.0f}점"
+
+        folium.PolyLine(
+            road["coords"],
+            color=casing_color,
+            weight=line_weight + 5,
+            opacity=0.22 if is_light else 0.18,
+            interactive=False,
+        ).add_to(line_group)
+        folium.PolyLine(
+            road["coords"],
+            color=line_color,
+            weight=line_weight,
+            opacity=line_opacity,
+            tooltip=tooltip,
+        ).add_to(line_group)
+
+    line_group.add_to(fmap)
+
+
 def build_map(reports: list[dict[str, Any]]) -> folium.Map:
-    tiles = "CartoDB positron" if st.session_state.theme_mode == "light" else "CartoDB dark_matter"
     fmap = folium.Map(
         location=[JEJU_CENTER["lat"], JEJU_CENTER["lng"]],
         zoom_start=11,
-        tiles=tiles,
+        tiles=None,
         control_scale=False,
         zoom_snap=0.25,
         zoom_delta=0.25,
         wheel_px_per_zoom_level=180,
         prefer_canvas=True,
     )
+    add_base_tile(fmap)
     add_map_chrome(fmap)
 
+    statuses = road_statuses(st.session_state.reports)
     db_roads, db_road_error = road_geojson_layer()
     if db_roads["features"]:
         styled_db_roads = enrich_road_geojson(
             db_roads,
-            road_statuses(st.session_state.reports),
+            statuses,
         )
         folium.GeoJson(
             styled_db_roads,
@@ -3590,29 +3716,9 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
     elif db_road_error:
         st.caption(db_road_error)
 
-    if not db_roads["features"]:
-        for road in road_statuses(st.session_state.reports):
-            terrain_score = float(road.get("terrain_score", 0))
-            line_color = road["color"]
-            line_weight = 7 if road["level"] >= 4 else 5
-            line_opacity = 0.86 if road["level"] else 0.45
-            if road["level"] == 0 and terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
-                line_color = terrain_color_for_score(terrain_score)
-                line_weight = 4
-                line_opacity = 0.48 + min(0.3, terrain_score / 260)
-            tooltip = f"{road['name']} · {road['status']}"
-            if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
-                tooltip = f"{tooltip} · DEM {terrain_score:.0f}점"
-            folium.PolyLine(
-                road["coords"],
-                color=line_color,
-                weight=line_weight,
-                opacity=line_opacity,
-                tooltip=tooltip,
-            ).add_to(fmap)
-
     add_safe_heat_layer(fmap, reports)
     add_report_heat_layers(fmap, reports)
+    add_major_road_status_lines(fmap, statuses)
 
     for report in reports:
         type_info = TYPE_BY_ID[report["type"]]
