@@ -1320,7 +1320,8 @@ def css() -> None:
         }}
         .st-key-central_report_composer {{
             position: relative;
-            overflow: hidden;
+            overflow: visible;
+            z-index: 20;
             margin-bottom: .5rem;
             padding: .58rem .68rem .56rem;
             border: 1px solid color-mix(in srgb, #dc2626 26%, var(--border));
@@ -1337,6 +1338,7 @@ def css() -> None:
             inset: 0 auto 0 0;
             width: 4px;
             background: linear-gradient(180deg, #dc2626, #f97316 52%, #2563eb);
+            pointer-events: none;
         }}
         .report-composer-hero {{
             display: grid;
@@ -1425,12 +1427,14 @@ def css() -> None:
         .st-key-central_report_composer div[data-testid="stSelectbox"] {{
             margin-bottom: 0;
         }}
-        .st-key-central_report_composer textarea {{
-            min-height: 68px !important;
-            height: 68px !important;
-        }}
-        .st-key-central_report_composer [data-testid="stTextArea"] {{
+        .st-key-central_report_composer [data-testid="stTextInput"] {{
             margin-bottom: 0;
+        }}
+        .st-key-central_report_composer [data-testid="stTextInput"] input {{
+            min-height: 2.05rem;
+            height: 2.05rem;
+            padding-top: .24rem;
+            padding-bottom: .24rem;
         }}
         .st-key-central_report_composer [data-testid="stFileUploaderDropzone"] {{
             min-height: 2.25rem;
@@ -1462,6 +1466,10 @@ def css() -> None:
         .st-key-map_canvas iframe {{
             display: block;
             width: 100%;
+        }}
+        .st-key-map_canvas {{
+            position: relative;
+            z-index: 1;
         }}
         @media (max-width: 900px) {{
             [data-testid="stExpandSidebarButton"] {{
@@ -4237,11 +4245,10 @@ def render_report_form() -> None:
 
         detail_col, photo_col = st.columns([1.18, .82], gap="medium")
         with detail_col:
-            comment = st.text_area(
+            comment = st.text_input(
                 "상세 내용",
                 max_chars=180,
                 placeholder="예: 통제 안내판 있음, 체인 차량만 통과 중",
-                height=68,
             )
         with photo_col:
             photos = st.file_uploader(
