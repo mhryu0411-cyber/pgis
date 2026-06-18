@@ -31,7 +31,6 @@ KMA_ASOS_STATION_ID = os.getenv("KMA_ASOS_STATION_ID", "184")
 KMA_ASOS_STATION_NAME = os.getenv("KMA_ASOS_STATION_NAME", "제주")
 WEATHER_REFRESH_SECONDS = 15 * 60
 WEATHER_WINDOW_HOURS = 6
-WEATHER_RECENT_LOOKBACK_HOURS = 12
 WEATHER_FALLBACK_DAY_COUNT = 3
 OTHER_ROAD_NAME = "기타도로"
 APP_DIR = Path(__file__).resolve().parent
@@ -1428,6 +1427,14 @@ def css() -> None:
         .st-key-central_report_composer div[data-testid="stSelectbox"] {{
             margin-bottom: 0;
         }}
+        .st-key-central_report_composer [data-testid="stTextArea"] {{
+            margin-bottom: 0;
+        }}
+        .st-key-central_report_composer textarea {{
+            min-height: 68px !important;
+            height: 68px !important;
+            resize: none;
+        }}
         .st-key-central_report_composer [data-testid="stTextInput"] {{
             margin-bottom: 0;
         }}
@@ -1555,6 +1562,9 @@ def init_state() -> None:
         "reporting_location": None,
         "last_clicked_location": None,
         "last_map_signature": None,
+        "last_map_feature_signature": None,
+        "last_map_object_signature": None,
+        "last_map_click_signature": None,
         "confirm_locks": {},
         "report_photo_nonce": 0,
         "comment_photo_nonce": {},
@@ -2533,26 +2543,12 @@ def asos_condition_meta(observation: dict[str, Any]) -> tuple[str, str]:
 
 def asos_query_windows(now_kst: datetime) -> list[dict[str, Any]]:
     hour_floor = now_kst.replace(minute=0, second=0, microsecond=0)
-    recent_end = hour_floor - timedelta(hours=1)
-    recent_start = recent_end - timedelta(hours=WEATHER_RECENT_LOOKBACK_HOURS - 1)
-    windows = [
-        {
-            "label": "최근 관측",
-            "start": recent_start,
-            "end": recent_end,
-            "num_rows": max(24, WEATHER_RECENT_LOOKBACK_HOURS * 2),
-        }
-    ]
-
-    first_available_offset = 1 if now_kst.hour >= 11 else 2
-    for offset in range(
-        first_available_offset,
-        first_available_offset + WEATHER_FALLBACK_DAY_COUNT,
-    ):
+    windows = []
+    for offset in range(1, WEATHER_FALLBACK_DAY_COUNT + 1):
         day_start = (hour_floor - timedelta(days=offset)).replace(hour=0)
         windows.append(
             {
-                "label": f"{offset}일 전 제공자료",
+                "label": "전일 제공자료" if offset == 1 else f"{offset}일 전 제공자료",
                 "start": day_start,
                 "end": day_start.replace(hour=23),
                 "num_rows": 24,
@@ -2631,6 +2627,15 @@ def parse_asos_response(response: requests.Response) -> dict[str, Any]:
     }
 
 
+def should_try_next_asos_window(result: dict[str, Any]) -> bool:
+    code = str(result.get("error_code", "")).strip()
+    message = str(result.get("error_message", "")).strip()
+    return code == "03" or (
+        code == "99"
+        and any(token in message for token in ("전날", "전일", "날짜 범위", "날짜범위"))
+    )
+
+
 @st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
 def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
     now_kst = datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
@@ -2655,7 +2660,7 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
 
         parsed = parse_asos_response(response)
         if not parsed.get("ok"):
-            if str(parsed.get("error_code")) == "03":
+            if should_try_next_asos_window(parsed):
                 last_empty_result = {
                     **parsed,
                     "error_message": (
@@ -3635,51 +3640,6 @@ def add_base_tile(fmap: folium.Map) -> None:
     ).add_to(fmap)
 
 
-def add_major_road_status_lines(
-    fmap: folium.Map,
-    statuses: list[dict[str, Any]],
-) -> None:
-    is_light = st.session_state.theme_mode == "light"
-    line_group = folium.FeatureGroup(
-        name="주요 도로 상태선",
-        overlay=True,
-        control=True,
-        show=True,
-    )
-    casing_color = "#0f172a" if is_light else "#ffffff"
-
-    for road in statuses:
-        terrain_score = float(road.get("terrain_score", 0))
-        line_color = road["color"]
-        line_weight = 8 if road["level"] >= 4 else 6 if road["level"] > 0 else 4
-        line_opacity = 0.92 if road["level"] else 0.52
-        if road["level"] == 0 and terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
-            line_color = terrain_color_for_score(terrain_score)
-            line_weight = 5
-            line_opacity = 0.58 + min(0.28, terrain_score / 260)
-
-        tooltip = f"{road['name']} · {road['status']}"
-        if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
-            tooltip = f"{tooltip} · DEM {terrain_score:.0f}점"
-
-        folium.PolyLine(
-            road["coords"],
-            color=casing_color,
-            weight=line_weight + 5,
-            opacity=0.22 if is_light else 0.18,
-            interactive=False,
-        ).add_to(line_group)
-        folium.PolyLine(
-            road["coords"],
-            color=line_color,
-            weight=line_weight,
-            opacity=line_opacity,
-            tooltip=tooltip,
-        ).add_to(line_group)
-
-    line_group.add_to(fmap)
-
-
 def build_map(reports: list[dict[str, Any]]) -> folium.Map:
     fmap = folium.Map(
         location=[JEJU_CENTER["lat"], JEJU_CENTER["lng"]],
@@ -3716,9 +3676,29 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
     elif db_road_error:
         st.caption(db_road_error)
 
+    if not db_roads["features"]:
+        for road in statuses:
+            terrain_score = float(road.get("terrain_score", 0))
+            line_color = road["color"]
+            line_weight = 7 if road["level"] >= 4 else 5
+            line_opacity = 0.86 if road["level"] else 0.45
+            if road["level"] == 0 and terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+                line_color = terrain_color_for_score(terrain_score)
+                line_weight = 4
+                line_opacity = 0.48 + min(0.3, terrain_score / 260)
+            tooltip = f"{road['name']} · {road['status']}"
+            if terrain_score >= TERRAIN_SCORE_MIN_DISPLAY:
+                tooltip = f"{tooltip} · DEM {terrain_score:.0f}점"
+            folium.PolyLine(
+                road["coords"],
+                color=line_color,
+                weight=line_weight,
+                opacity=line_opacity,
+                tooltip=tooltip,
+            ).add_to(fmap)
+
     add_safe_heat_layer(fmap, reports)
     add_report_heat_layers(fmap, reports)
-    add_major_road_status_lines(fmap, statuses)
 
     for report in reports:
         type_info = TYPE_BY_ID[report["type"]]
@@ -3809,9 +3789,10 @@ def start_report_from_road_feature(feature: dict[str, Any]) -> bool:
         return False
 
     signature = f"road:{road_id or road_name}:{lat_value:.6f}:{lng_value:.6f}"
-    if st.session_state.last_map_signature == signature:
+    if st.session_state.last_map_feature_signature == signature:
         return False
 
+    st.session_state.last_map_feature_signature = signature
     st.session_state.last_map_signature = signature
     start_report_at(lat_value, lng_value, road_name=str(road_name), road_id=str(road_id or ""))
     return True
@@ -3834,7 +3815,8 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
         lat = float(object_clicked["lat"])
         lng = float(object_clicked["lng"])
         signature = f"object:{lat:.5f}:{lng:.5f}"
-        if st.session_state.last_map_signature != signature:
+        if st.session_state.last_map_object_signature != signature:
+            st.session_state.last_map_object_signature = signature
             st.session_state.last_map_signature = signature
             report = nearest_report_at(lat, lng, reports)
             if report:
@@ -3860,10 +3842,11 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
             object_lng = float(object_clicked["lng"])
             object_signature = f"object:{object_lat:.5f}:{object_lng:.5f}"
             same_object_point = abs(object_lat - lat) < 0.00001 and abs(object_lng - lng) < 0.00001
-            if same_object_point and st.session_state.last_map_signature == object_signature:
+            if same_object_point and st.session_state.last_map_object_signature == object_signature:
                 return
         signature = f"map:{lat:.5f}:{lng:.5f}"
-        if st.session_state.last_map_signature != signature:
+        if st.session_state.last_map_click_signature != signature:
+            st.session_state.last_map_click_signature = signature
             st.session_state.last_map_signature = signature
             report = nearest_report_at(lat, lng, reports)
             if report:
@@ -4312,22 +4295,30 @@ def render_report_form() -> None:
                 "위험 유형",
                 options=type_ids,
                 format_func=lambda key: f"{TYPE_BY_ID[key]['icon']} {TYPE_BY_ID[key]['label']}",
+                key=f"report_type_{nonce}_{location_signature}",
             )
         with vehicle_col:
             vehicle = st.selectbox(
                 "차량 정보",
                 options=vehicle_ids,
                 format_func=lambda key: f"{VEHICLE_BY_ID[key]['icon']} {VEHICLE_BY_ID[key]['label']}",
+                key=f"report_vehicle_{nonce}_{location_signature}",
             )
         with snow_col:
-            snow = st.selectbox("적설", options=["선택 안 함", *SNOW_DEPTH])
+            snow = st.selectbox(
+                "적설",
+                options=["선택 안 함", *SNOW_DEPTH],
+                key=f"report_snow_{nonce}_{location_signature}",
+            )
 
         detail_col, photo_col = st.columns([1.18, .82], gap="medium")
         with detail_col:
-            comment = st.text_input(
+            comment = st.text_area(
                 "상세 내용",
                 max_chars=180,
                 placeholder="예: 통제 안내판 있음, 체인 차량만 통과 중",
+                height=68,
+                key=f"report_comment_{nonce}_{location_signature}",
             )
         with photo_col:
             photos = st.file_uploader(
