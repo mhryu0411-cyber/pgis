@@ -30,8 +30,8 @@ KMA_ASOS_API_URL = (
 KMA_ASOS_STATION_ID = os.getenv("KMA_ASOS_STATION_ID", "184")
 KMA_ASOS_STATION_NAME = os.getenv("KMA_ASOS_STATION_NAME", "제주")
 WEATHER_REFRESH_SECONDS = 15 * 60
-WEATHER_WINDOW_HOURS = 6
-WEATHER_QUERY_LOOKBACK_HOURS = 12
+WEATHER_WINDOW_HOURS = 5
+WEATHER_QUERY_LOOKBACK_DAYS = 3
 OTHER_ROAD_NAME = "기타도로"
 APP_DIR = Path(__file__).resolve().parent
 ROAD_MATCH_THRESHOLD_KM = 1.0
@@ -2533,16 +2533,16 @@ def asos_condition_meta(observation: dict[str, Any]) -> tuple[str, str]:
 @st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
 def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
     now_kst = datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
-    query_start = now_kst - timedelta(hours=WEATHER_QUERY_LOOKBACK_HOURS)
+    query_start = now_kst - timedelta(days=WEATHER_QUERY_LOOKBACK_DAYS)
     params = {
         "serviceKey": service_key,
         "pageNo": 1,
-        "numOfRows": 48,
+        "numOfRows": 96,
         "dataType": "JSON",
         "dataCd": "ASOS",
         "dateCd": "HR",
         "startDt": query_start.strftime("%Y%m%d"),
-        "startHh": query_start.strftime("%H"),
+        "startHh": "00",
         "endDt": now_kst.strftime("%Y%m%d"),
         "endHh": now_kst.strftime("%H"),
         "stnIds": KMA_ASOS_STATION_ID,
@@ -2616,39 +2616,14 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
             "ok": False,
             "error_code": "NO_DATA",
             "error_message": (
-                f"{query_start:%Y-%m-%d %H시}~{now_kst:%Y-%m-%d %H시} "
+                f"{query_start:%Y-%m-%d}~{now_kst:%Y-%m-%d %H시} "
                 "관측자료가 없습니다."
             ),
         }
 
-    cutoff = now_kst - timedelta(hours=WEATHER_WINDOW_HOURS)
-    recent_observations = [
-        item
-        for item in observations
-        if (observed := parse_asos_time(item.get("tm"))) is not None
-        and cutoff <= observed <= now_kst + timedelta(minutes=5)
-    ]
-    if not recent_observations:
-        latest = observations[-1]
-        latest_observed = parse_asos_time(latest.get("tm"))
-        latest_text = (
-            latest_observed.strftime("%Y-%m-%d %H:%M")
-            if latest_observed
-            else str(latest.get("tm") or "확인 불가")
-        )
-        return {
-            "ok": False,
-            "error_code": "STALE_DATA",
-            "error_message": (
-                f"최근 {WEATHER_WINDOW_HOURS}시간 이내 관측이 없습니다. "
-                f"마지막 제공 관측은 {latest_text}입니다."
-            ),
-            "latest_observed": latest_text,
-        }
-
     return {
         "ok": True,
-        "items": recent_observations[-WEATHER_WINDOW_HOURS:],
+        "items": observations[-WEATHER_WINDOW_HOURS:],
         "query_start": query_start.isoformat(timespec="minutes"),
         "query_end": now_kst.isoformat(timespec="minutes"),
     }
@@ -2671,8 +2646,6 @@ def asos_error_detail(result: dict[str, Any]) -> str:
     if code == "03":
         return "조회 기간에 제공 가능한 ASOS 시간자료가 없습니다(03)."
     if code == "NO_DATA":
-        return message
-    if code == "STALE_DATA":
         return message
     if code == "TIMEOUT":
         return "기상청 API 응답이 지연되고 있습니다. 잠시 후 자동으로 다시 시도합니다."
@@ -2779,7 +2752,7 @@ def render_weather_panel() -> None:
             </div>
             <div class="weather-summary">
                 <div class="weather-summary-pill {observation_class}">
-                    <span>최근 {WEATHER_WINDOW_HOURS}시간 기온</span>
+                    <span>최근 제공 {WEATHER_WINDOW_HOURS}시간 기온</span>
                     <strong>{escape(temperature_range)}</strong>
                 </div>
                 <div class="weather-summary-pill {observation_class}">
@@ -2794,7 +2767,7 @@ def render_weather_panel() -> None:
                 <div class="weather-th">적설</div>
                 {row_html}
             </div>
-            <div class="weather-source">기상청 ASOS 시간자료 · 최근 {WEATHER_WINDOW_HOURS}시간 이내 관측만 표시 · 15분 캐시</div>
+            <div class="weather-source">기상청 ASOS 시간자료 · 최신 제공 관측 {WEATHER_WINDOW_HOURS}개 시간만 표시 · 15분 캐시</div>
         </div>
         """
     )
