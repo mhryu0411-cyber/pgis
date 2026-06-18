@@ -11,6 +11,8 @@ from math import cos, hypot, radians
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
+from urllib.parse import unquote
+from zoneinfo import ZoneInfo
 
 import folium
 import requests
@@ -21,12 +23,11 @@ from streamlit_folium import st_folium
 
 
 JEJU_CENTER = {"lat": 33.3798, "lng": 126.5453}
-WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
-WEATHER_POINT = {
-    "name": "제주 중산간",
-    "lat": JEJU_CENTER["lat"],
-    "lng": JEJU_CENTER["lng"],
-}
+KMA_ASOS_API_URL = (
+    "https://apis.data.go.kr/1360000/AsosHourlyInfoService/getWthrDataList"
+)
+KMA_ASOS_STATION_ID = os.getenv("KMA_ASOS_STATION_ID", "184")
+KMA_ASOS_STATION_NAME = os.getenv("KMA_ASOS_STATION_NAME", "제주")
 WEATHER_REFRESH_SECONDS = 15 * 60
 OTHER_ROAD_NAME = "기타도로"
 APP_DIR = Path(__file__).resolve().parent
@@ -780,7 +781,7 @@ def css() -> None:
         }}
         .weather-table {{
             display: grid;
-            grid-template-columns: minmax(4.1rem, 1fr) minmax(3.2rem, .66fr) minmax(3.5rem, .72fr) minmax(4.2rem, .9fr);
+            grid-template-columns: minmax(4.1rem, 1fr) minmax(3.2rem, .7fr) minmax(3.3rem, .75fr) minmax(3.3rem, .75fr);
             border: 1px solid var(--border);
             border-radius: 8px;
             overflow: hidden;
@@ -2106,67 +2107,26 @@ def render_cctv_panel(road_name: str | None = None, key_suffix: str = "home") ->
         st.caption("원본 제공: 제주 재난안전대책본부 적설감시 CCTV")
 
 
-WEATHER_CODE_META = {
-    0: ("맑음", "☀️"),
-    1: ("대체로 맑음", "🌤️"),
-    2: ("구름 조금", "⛅"),
-    3: ("흐림", "☁️"),
-    45: ("안개", "🌫️"),
-    48: ("상고대 안개", "🌫️"),
-    51: ("이슬비", "🌦️"),
-    53: ("이슬비", "🌦️"),
-    55: ("강한 이슬비", "🌧️"),
-    56: ("어는 이슬비", "🌧️"),
-    57: ("강한 어는 이슬비", "🌧️"),
-    61: ("약한 비", "🌧️"),
-    63: ("비", "🌧️"),
-    65: ("강한 비", "🌧️"),
-    66: ("어는 비", "🌧️"),
-    67: ("강한 어는 비", "🌧️"),
-    71: ("약한 눈", "🌨️"),
-    73: ("눈", "🌨️"),
-    75: ("강한 눈", "❄️"),
-    77: ("싸락눈", "❄️"),
-    80: ("소나기", "🌦️"),
-    81: ("소나기", "🌦️"),
-    82: ("강한 소나기", "🌧️"),
-    85: ("눈 소나기", "🌨️"),
-    86: ("강한 눈 소나기", "❄️"),
-    95: ("뇌우", "⛈️"),
-    96: ("우박 동반 뇌우", "⛈️"),
-    99: ("강한 우박 동반 뇌우", "⛈️"),
-}
-SNOW_WEATHER_CODES = {71, 73, 75, 77, 85, 86}
-FREEZING_WEATHER_CODES = {56, 57, 66, 67}
+def kma_asos_service_key() -> str:
+    key = os.getenv("KMA_ASOS_SERVICE_KEY", "").strip()
+    if not key:
+        try:
+            key = str(st.secrets["KMA_ASOS_SERVICE_KEY"]).strip()
+        except Exception:
+            key = ""
+    return unquote(key)
 
 
-def weather_float(value: Any, default: float = 0.0) -> float:
-    if value is None:
-        return default
+def asos_float(value: Any) -> float | None:
+    if value in (None, "", "-", "null"):
+        return None
     try:
         return float(value)
     except (TypeError, ValueError):
-        return default
+        return None
 
 
-def weather_int(value: Any, default: int = 0) -> int:
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def clamp_percent(value: Any) -> int:
-    return max(0, min(100, int(round(weather_float(value)))))
-
-
-def weather_condition_meta(code: Any) -> tuple[str, str]:
-    return WEATHER_CODE_META.get(weather_int(code, -1), ("기상 정보", "🌡️"))
-
-
-def parse_weather_time(value: Any) -> datetime | None:
+def parse_asos_time(value: Any) -> datetime | None:
     if not value:
         return None
     try:
@@ -2175,238 +2135,190 @@ def parse_weather_time(value: Any) -> datetime | None:
         return None
 
 
-def weather_unit(weather: dict[str, Any], section: str, key: str, fallback: str) -> str:
-    units = weather.get(f"{section}_units", {})
-    if isinstance(units, dict):
-        return str(units.get(key, fallback))
-    return fallback
+def asos_value_text(value: Any, unit: str, digits: int = 1) -> str:
+    number = asos_float(value)
+    if number is None:
+        return "-"
+    return f"{number:.{digits}f}{unit}"
+
+
+def wind_direction_label(value: Any) -> str:
+    degrees = asos_float(value)
+    if degrees is None:
+        return ""
+    labels = (
+        "북",
+        "북북동",
+        "북동",
+        "동북동",
+        "동",
+        "동남동",
+        "남동",
+        "남남동",
+        "남",
+        "남남서",
+        "남서",
+        "서남서",
+        "서",
+        "서북서",
+        "북서",
+        "북북서",
+    )
+    return labels[int((degrees + 11.25) // 22.5) % 16]
+
+
+def asos_condition_meta(observation: dict[str, Any]) -> tuple[str, str]:
+    new_snow = asos_float(observation.get("hr3Fhsc")) or 0.0
+    snow_depth = asos_float(observation.get("dsnw")) or 0.0
+    rain = asos_float(observation.get("rn")) or 0.0
+    visibility = asos_float(observation.get("vs"))
+    cloud = asos_float(observation.get("dc10Tca"))
+
+    if new_snow > 0:
+        return "신적설 관측", "❄️"
+    if rain > 0:
+        return "강수 관측", "🌧️"
+    if snow_depth > 0:
+        return "적설 있음", "🌨️"
+    if visibility is not None and visibility < 1000:
+        return "낮은 시정", "🌫️"
+    if cloud is None:
+        return "기상 관측", "🌡️"
+    if cloud <= 2:
+        return "맑음", "☀️"
+    if cloud <= 5:
+        return "구름 조금", "🌤️"
+    if cloud <= 8:
+        return "구름 많음", "⛅"
+    return "흐림", "☁️"
 
 
 @st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
-def fetch_jeju_weather() -> dict[str, Any] | None:
+def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any] | None:
+    end_day = datetime.now(ZoneInfo("Asia/Seoul")).date() - timedelta(days=1)
+    start_day = end_day - timedelta(days=2)
     params = {
-        "latitude": WEATHER_POINT["lat"],
-        "longitude": WEATHER_POINT["lng"],
-        "timezone": "Asia/Seoul",
-        "forecast_hours": 24,
-        "current": ",".join(
-            [
-                "temperature_2m",
-                "relative_humidity_2m",
-                "apparent_temperature",
-                "precipitation",
-                "snowfall",
-                "weather_code",
-                "cloud_cover",
-                "wind_speed_10m",
-                "wind_gusts_10m",
-            ]
-        ),
-        "hourly": ",".join(
-            [
-                "temperature_2m",
-                "apparent_temperature",
-                "precipitation_probability",
-                "precipitation",
-                "snowfall",
-                "weather_code",
-                "wind_speed_10m",
-            ]
-        ),
-        "wind_speed_unit": "kmh",
-        "precipitation_unit": "mm",
+        "serviceKey": service_key,
+        "pageNo": 1,
+        "numOfRows": 72,
+        "dataType": "JSON",
+        "dataCd": "ASOS",
+        "dateCd": "HR",
+        "startDt": start_day.strftime("%Y%m%d"),
+        "startHh": "00",
+        "endDt": end_day.strftime("%Y%m%d"),
+        "endHh": "23",
+        "stnIds": KMA_ASOS_STATION_ID,
     }
     try:
-        response = requests.get(WEATHER_API_URL, params=params, timeout=5)
+        response = requests.get(KMA_ASOS_API_URL, params=params, timeout=8)
         response.raise_for_status()
-        weather = response.json()
+        payload = response.json()
     except (requests.RequestException, ValueError):
         return None
 
-    if not isinstance(weather, dict) or "current" not in weather or "hourly" not in weather:
+    api_response = payload.get("response", {}) if isinstance(payload, dict) else {}
+    header = api_response.get("header", {}) if isinstance(api_response, dict) else {}
+    if str(header.get("resultCode", "")) != "00":
         return None
-    return weather
+
+    body = api_response.get("body", {})
+    items_container = body.get("items", {}) if isinstance(body, dict) else {}
+    items = items_container.get("item", []) if isinstance(items_container, dict) else []
+    if isinstance(items, dict):
+        items = [items]
+    if not isinstance(items, list):
+        return None
+
+    observations = [item for item in items if isinstance(item, dict)]
+    observations.sort(key=lambda item: parse_asos_time(item.get("tm")) or datetime.min)
+    if not observations:
+        return None
+    return {"items": observations[-24:], "query_end": end_day.isoformat()}
 
 
-def hourly_weather_value(hourly: dict[str, Any], key: str, index: int, default: Any = None) -> Any:
-    values = hourly.get(key, [])
-    if isinstance(values, list) and 0 <= index < len(values):
-        return values[index]
-    return default
-
-
-def snow_chance_for_hour(
-    precip_probability: Any,
-    snowfall: Any,
-    temperature: Any,
-    weather_code: Any,
-) -> int:
-    precip = clamp_percent(precip_probability)
-    snow_amount = weather_float(snowfall)
-    temp = weather_float(temperature, 10.0)
-    code = weather_int(weather_code, -1)
-
-    if code in SNOW_WEATHER_CODES or snow_amount > 0:
-        if snow_amount >= 0.5:
-            baseline = 82
-        elif snow_amount >= 0.1:
-            baseline = 68
-        else:
-            baseline = 55
-        return max(precip, baseline)
-
-    if code in FREEZING_WEATHER_CODES and temp <= 3:
-        return max(35, min(90, int(round(precip * 0.8))))
-    if temp <= 1 and precip >= 10:
-        return min(90, max(25, int(round(precip * 0.8))))
-    if temp <= 3 and precip >= 20:
-        return min(75, max(18, int(round(precip * 0.55))))
-    if temp <= 4 and precip >= 45:
-        return min(55, max(12, int(round(precip * 0.35))))
-    return 0
-
-
-def snow_class_for_chance(chance: int) -> str:
-    if chance >= 65:
-        return "snow-high"
-    if chance >= 35:
-        return "snow-mid"
-    if chance > 0:
-        return "snow-low"
-    return "snow-calm"
-
-
-def snow_summary_for_row(chance: int, snowfall: float, codes: list[Any]) -> str:
-    if chance >= 65:
-        return "눈 예보 강함" if snowfall > 0 else "눈 가능성 높음"
-    if chance >= 35:
-        return "눈 가능성"
-    if chance > 0:
-        return "낮은 가능성"
-
-    snow_code = next((code for code in codes if weather_int(code, -1) in SNOW_WEATHER_CODES), None)
-    label, _icon = weather_condition_meta(snow_code if snow_code is not None else (codes[0] if codes else None))
-    return label
-
-
-def weather_period_label(start_time: Any, end_time: Any) -> str:
-    start = parse_weather_time(start_time)
-    end = parse_weather_time(end_time)
-    if not start:
-        return escape(str(start_time or ""))
-    if not end:
-        end = start
-    end = end + timedelta(hours=1)
-    prefix = "" if start.date() == datetime.now().date() else start.strftime("%m/%d ")
-    return f"{prefix}{start:%H}~{end:%H}시"
-
-
-def build_snow_forecast_rows(weather: dict[str, Any]) -> list[dict[str, Any]]:
-    hourly = weather.get("hourly", {})
-    if not isinstance(hourly, dict):
-        return []
-
-    times = hourly.get("time", [])
-    if not isinstance(times, list):
-        return []
-
-    rows = []
-    limit = min(24, len(times))
-    for start in range(0, limit, 2):
-        indexes = list(range(start, min(start + 2, limit)))
-        temps = [
-            weather_float(hourly_weather_value(hourly, "temperature_2m", index))
-            for index in indexes
-        ]
-        snowfall_values = [
-            weather_float(hourly_weather_value(hourly, "snowfall", index))
-            for index in indexes
-        ]
-        codes = [hourly_weather_value(hourly, "weather_code", index) for index in indexes]
-        chances = [
-            snow_chance_for_hour(
-                hourly_weather_value(hourly, "precipitation_probability", index),
-                hourly_weather_value(hourly, "snowfall", index),
-                hourly_weather_value(hourly, "temperature_2m", index),
-                hourly_weather_value(hourly, "weather_code", index),
-            )
-            for index in indexes
-        ]
-        chance = max(chances, default=0)
-        snowfall_sum = sum(snowfall_values)
-        rows.append(
-            {
-                "period": weather_period_label(times[start], times[indexes[-1]]),
-                "chance": chance,
-                "class": snow_class_for_chance(chance),
-                "temperature": (
-                    f"{min(temps):.0f}~{max(temps):.0f}°"
-                    if temps and min(temps) != max(temps)
-                    else f"{temps[0]:.0f}°" if temps else "-"
-                ),
-                "snowfall": snowfall_sum,
-                "summary": snow_summary_for_row(chance, snowfall_sum, codes),
-            }
-        )
-    return rows
-
-
-def format_weather_timestamp(value: Any) -> str:
-    observed = parse_weather_time(value)
-    if not observed:
-        return datetime.now().strftime("%H:%M")
-    return observed.strftime("%m/%d %H:%M")
+def render_asos_unavailable(message: str, detail: str) -> None:
+    render_html(
+        f"""
+        <div class="weather-card">
+            <div class="weather-head">
+                <div>
+                    <div class="weather-kicker">기상청 ASOS 시간자료</div>
+                    <div class="weather-title">{escape(message)}</div>
+                    <div class="weather-place">{escape(detail)}</div>
+                </div>
+                <div class="weather-icon">🌡️</div>
+            </div>
+            <div class="empty-note">지도와 제보 기능은 계속 사용할 수 있습니다.</div>
+        </div>
+        """
+    )
 
 
 def render_weather_panel() -> None:
-    weather = fetch_jeju_weather()
-    if not weather:
-        render_html(
-            """
-            <div class="weather-card">
-                <div class="weather-head">
-                    <div>
-                        <div class="weather-kicker">현재 제주 날씨</div>
-                        <div class="weather-title">날씨 정보 대기 중</div>
-                        <div class="weather-place">네트워크 연결 후 자동 갱신</div>
-                    </div>
-                    <div class="weather-icon">🌡️</div>
-                </div>
-                <div class="empty-note">현재 날씨 정보를 가져오지 못했습니다. 지도와 제보 기능은 계속 사용할 수 있습니다.</div>
-            </div>
-            """
+    service_key = kma_asos_service_key()
+    if not service_key:
+        render_asos_unavailable(
+            "기상청 API 키 필요",
+            "KMA_ASOS_SERVICE_KEY를 설정하면 제주 관측자료를 불러옵니다.",
         )
         return
 
-    current = weather.get("current", {})
-    if not isinstance(current, dict):
-        current = {}
-    rows = build_snow_forecast_rows(weather)
-    condition_label, condition_icon = weather_condition_meta(current.get("weather_code"))
-    temperature = weather_float(current.get("temperature_2m"))
-    apparent = weather_float(current.get("apparent_temperature"))
-    humidity = weather_int(current.get("relative_humidity_2m"))
-    wind = weather_float(current.get("wind_speed_10m"))
-    gust = weather_float(current.get("wind_gusts_10m"))
-    precipitation = weather_float(current.get("precipitation"))
-    current_snow = weather_float(current.get("snowfall"))
-    peak_snow_chance = max((int(row["chance"]) for row in rows), default=0)
-    expected_snowfall = sum(float(row["snowfall"]) for row in rows)
-    snow_class = snow_class_for_chance(peak_snow_chance)
-    precip_unit = weather_unit(weather, "current", "precipitation", "mm")
-    snow_unit = weather_unit(weather, "hourly", "snowfall", "cm")
-    updated = format_weather_timestamp(current.get("time"))
+    weather = fetch_jeju_asos_hourly(service_key)
+    if not weather:
+        render_asos_unavailable(
+            "ASOS 관측자료 대기 중",
+            "인증키, 네트워크 또는 기상청 API 응답을 확인해 주세요.",
+        )
+        return
+
+    observations = weather["items"]
+    latest = observations[-1]
+    station_name = str(latest.get("stnNm") or KMA_ASOS_STATION_NAME)
+    observed = parse_asos_time(latest.get("tm"))
+    observed_text = observed.strftime("%m/%d %H:%M") if observed else str(latest.get("tm") or "-")
+    condition_label, condition_icon = asos_condition_meta(latest)
+    temperature = asos_value_text(latest.get("ta"), "°")
+    ground_temperature = asos_value_text(latest.get("ts"), "°")
+    humidity = asos_value_text(latest.get("hm"), "%", digits=0)
+    wind = asos_value_text(latest.get("ws"), "m/s")
+    wind_direction = wind_direction_label(latest.get("wd"))
+    if wind_direction and wind != "-":
+        wind = f"{wind} · {wind_direction}"
+    rain = asos_value_text(latest.get("rn"), "mm")
+    snow_depth = asos_value_text(latest.get("dsnw"), "cm")
+
+    temperatures = [
+        number
+        for item in observations
+        if (number := asos_float(item.get("ta"))) is not None
+    ]
+    total_rain = sum(asos_float(item.get("rn")) or 0.0 for item in observations)
+    max_new_snow = max(
+        (asos_float(item.get("hr3Fhsc")) or 0.0 for item in observations),
+        default=0.0,
+    )
+    temperature_range = (
+        f"{min(temperatures):.1f}~{max(temperatures):.1f}°"
+        if temperatures
+        else "-"
+    )
+    observation_class = (
+        "snow-high"
+        if max_new_snow > 0
+        else "snow-mid" if total_rain > 0 else "snow-calm"
+    )
 
     row_html = "".join(
         clean_html(
             f"""
-            <div class="weather-td">{escape(row['period'])}</div>
-            <div class="weather-td"><span class="snow-chip {row['class']}">{int(row['chance'])}%</span></div>
-            <div class="weather-td">{escape(row['temperature'])}</div>
-            <div class="weather-td">{escape(row['summary'])}</div>
+            <div class="weather-td">{escape((parse_asos_time(item.get('tm')) or datetime.min).strftime('%m/%d %H시'))}</div>
+            <div class="weather-td">{escape(asos_value_text(item.get('ta'), '°'))}</div>
+            <div class="weather-td">{escape(asos_value_text(item.get('rn'), 'mm'))}</div>
+            <div class="weather-td">{escape(asos_value_text(item.get('dsnw'), 'cm'))}</div>
             """
         )
-        for row in rows
+        for item in reversed(observations[-12:])
     )
 
     render_html(
@@ -2414,36 +2326,36 @@ def render_weather_panel() -> None:
         <div class="weather-card">
             <div class="weather-head">
                 <div>
-                    <div class="weather-kicker">현재 제주 날씨</div>
-                    <div class="weather-title">{escape(condition_label)} · {temperature:.1f}°</div>
-                    <div class="weather-place">{escape(WEATHER_POINT['name'])} 기준 · {escape(updated)}</div>
+                    <div class="weather-kicker">최근 제주 ASOS 관측</div>
+                    <div class="weather-title">{escape(condition_label)} · {escape(temperature)}</div>
+                    <div class="weather-place">{escape(station_name)}({escape(KMA_ASOS_STATION_ID)}) · {escape(observed_text)}</div>
                 </div>
                 <div class="weather-icon">{condition_icon}</div>
             </div>
             <div class="weather-metrics">
-                <div class="weather-metric"><span>체감</span><strong>{apparent:.1f}°</strong></div>
-                <div class="weather-metric"><span>습도</span><strong>{humidity}%</strong></div>
-                <div class="weather-metric"><span>바람</span><strong>{wind:.0f}km/h · 돌풍 {gust:.0f}</strong></div>
-                <div class="weather-metric"><span>강수/적설</span><strong>{precipitation:.1f}{escape(precip_unit)} · 눈 {current_snow:.1f}{escape(snow_unit)}</strong></div>
+                <div class="weather-metric"><span>지면온도</span><strong>{escape(ground_temperature)}</strong></div>
+                <div class="weather-metric"><span>습도</span><strong>{escape(humidity)}</strong></div>
+                <div class="weather-metric"><span>바람</span><strong>{escape(wind)}</strong></div>
+                <div class="weather-metric"><span>강수 / 적설</span><strong>{escape(rain)} · {escape(snow_depth)}</strong></div>
             </div>
             <div class="weather-summary">
-                <div class="weather-summary-pill {snow_class}">
-                    <span>24시간 최고 눈 가능성</span>
-                    <strong>{peak_snow_chance}%</strong>
+                <div class="weather-summary-pill {observation_class}">
+                    <span>최근 24시간 기온</span>
+                    <strong>{escape(temperature_range)}</strong>
                 </div>
-                <div class="weather-summary-pill {snow_class}">
-                    <span>예상 적설 합계</span>
-                    <strong>{expected_snowfall:.1f}{escape(snow_unit)}</strong>
+                <div class="weather-summary-pill {observation_class}">
+                    <span>강수 합계 / 최대 3시간 신적설</span>
+                    <strong>{total_rain:.1f}mm · {max_new_snow:.1f}cm</strong>
                 </div>
             </div>
             <div class="weather-table">
                 <div class="weather-th">시간</div>
-                <div class="weather-th">눈</div>
                 <div class="weather-th">기온</div>
-                <div class="weather-th">예상</div>
+                <div class="weather-th">강수</div>
+                <div class="weather-th">적설</div>
                 {row_html}
             </div>
-            <div class="weather-source">Open-Meteo 예보 · 15분 캐시</div>
+            <div class="weather-source">기상청 ASOS 시간자료 · 최근 12개 시간 표시 · 전일(D-1)까지 제공 · 15분 캐시</div>
         </div>
         """
     )
