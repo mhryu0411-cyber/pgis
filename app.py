@@ -1187,6 +1187,123 @@ def css() -> None:
             border: 1px solid color-mix(in srgb, var(--selected-color) 34%, var(--border));
             font-size: 1.12rem;
         }}
+        .st-key-central_report_composer {{
+            position: relative;
+            overflow: hidden;
+            margin-bottom: .85rem;
+            padding: 1rem 1.05rem .9rem;
+            border: 1px solid color-mix(in srgb, #dc2626 26%, var(--border));
+            border-radius: 12px;
+            background:
+                radial-gradient(circle at 0 0, rgba(239, 68, 68, .16), transparent 34%),
+                radial-gradient(circle at 100% 0, rgba(37, 99, 235, .13), transparent 38%),
+                linear-gradient(135deg, color-mix(in srgb, var(--panel) 94%, #fff), var(--panel));
+            box-shadow: 0 18px 50px var(--shadow);
+        }}
+        .st-key-central_report_composer::before {{
+            content: "";
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 6px;
+            background: linear-gradient(180deg, #dc2626, #f97316 52%, #2563eb);
+        }}
+        .report-composer-hero {{
+            display: grid;
+            grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+            gap: .8rem;
+            margin-bottom: .8rem;
+        }}
+        .report-composer-intro,
+        .report-composer-location {{
+            min-width: 0;
+            border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+            border-radius: 10px;
+            padding: .82rem .9rem;
+            background: color-mix(in srgb, var(--panel) 82%, transparent);
+            backdrop-filter: blur(8px);
+        }}
+        .report-composer-intro {{
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }}
+        .report-composer-location {{
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: .7rem;
+            border-color: color-mix(in srgb, var(--selected-color) 35%, var(--border));
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--selected-color) 13%, transparent), transparent 62%),
+                color-mix(in srgb, var(--panel) 86%, transparent);
+        }}
+        .report-composer-kicker {{
+            color: #dc2626;
+            font-size: .72rem;
+            font-weight: 950;
+        }}
+        .report-composer-title {{
+            color: var(--text);
+            font-size: 1.2rem;
+            line-height: 1.22;
+            font-weight: 950;
+            margin-top: .12rem;
+        }}
+        .report-composer-copy {{
+            color: var(--muted);
+            font-size: .78rem;
+            line-height: 1.48;
+            margin-top: .22rem;
+        }}
+        .report-location-kicker {{
+            color: var(--selected-color);
+            font-size: .7rem;
+            font-weight: 950;
+        }}
+        .report-location-name {{
+            color: var(--text);
+            font-size: 1rem;
+            line-height: 1.24;
+            font-weight: 950;
+            margin-top: .12rem;
+            overflow-wrap: anywhere;
+        }}
+        .report-location-meta {{
+            color: var(--muted);
+            font-size: .71rem;
+            line-height: 1.4;
+            margin-top: .2rem;
+        }}
+        .report-location-icon {{
+            width: 2.5rem;
+            height: 2.5rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--selected-color) 15%, var(--panel));
+            border: 1px solid color-mix(in srgb, var(--selected-color) 32%, var(--border));
+            color: var(--selected-color);
+            font-size: 1.18rem;
+        }}
+        .st-key-central_report_composer div[data-testid="stForm"] {{
+            border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+            border-radius: 10px;
+            padding: .8rem .85rem .72rem;
+            background: color-mix(in srgb, var(--panel) 86%, transparent);
+        }}
+        .st-key-central_report_composer div[data-testid="stForm"] label p {{
+            color: var(--muted);
+            font-size: .76rem;
+            font-weight: 850;
+        }}
+        .st-key-central_report_composer div[data-testid="stFormSubmitButton"] button {{
+            min-height: 2.8rem;
+            border: 0;
+            background: linear-gradient(100deg, #dc2626, #ea580c);
+            box-shadow: 0 9px 22px rgba(220, 38, 38, .2);
+            font-weight: 900;
+        }}
         .st-key-theme_light_sidebar button,
         .st-key-theme_dark_sidebar button {{
             min-height: 2.05rem;
@@ -1200,6 +1317,7 @@ def css() -> None:
         @media (max-width: 900px) {{
             .photo-grid {{ grid-template-columns: 1fr; }}
             .timeline-dock-grid {{ grid-template-columns: 1fr; }}
+            .report-composer-hero {{ grid-template-columns: 1fr; }}
         }}
         </style>
         """
@@ -3806,18 +3924,20 @@ def render_report_form() -> None:
 
     render_html(
         f"""
-        <div class="report-entry-card">
-            <div class="report-entry-kicker">가장 중요한 입력</div>
-            <div class="report-entry-title">위험 제보 바로 등록</div>
-            <div class="report-entry-copy">{escape(guide)}</div>
-        </div>
-        <div class="selected-road-card" style="--selected-color:{selected_color};">
-            <div>
-                <div class="selected-road-kicker">{escape(location_source)}</div>
-                <div class="selected-road-name">{escape(selected_name)}</div>
-                <div class="selected-road-meta">{escape(selected_meta)}</div>
+        <div class="report-composer-hero">
+            <div class="report-composer-intro">
+                <div class="report-composer-kicker">가장 중요한 입력</div>
+                <div class="report-composer-title">위험 제보 바로 등록</div>
+                <div class="report-composer-copy">{escape(guide)}</div>
             </div>
-            <div class="selected-road-icon">{selected_icon}</div>
+            <div class="report-composer-location" style="--selected-color:{selected_color};">
+                <div>
+                    <div class="report-location-kicker">{escape(location_source)}</div>
+                    <div class="report-location-name">{escape(selected_name)}</div>
+                    <div class="report-location-meta">{escape(selected_meta)}</div>
+                </div>
+                <div class="report-location-icon">{selected_icon}</div>
+            </div>
         </div>
         """
     )
@@ -3828,29 +3948,36 @@ def render_report_form() -> None:
     vehicle_ids = [item["id"] for item in VEHICLE_TYPES]
 
     with st.form(f"new_report_form_{nonce}_{location_signature}"):
-        report_type = st.selectbox(
-            "위험 유형",
-            options=type_ids,
-            format_func=lambda key: f"{TYPE_BY_ID[key]['icon']} {TYPE_BY_ID[key]['label']}",
-        )
-        vehicle = st.selectbox(
-            "차량 정보",
-            options=vehicle_ids,
-            format_func=lambda key: f"{VEHICLE_BY_ID[key]['icon']} {VEHICLE_BY_ID[key]['label']}",
-        )
-        snow = st.selectbox("적설", options=["선택 안 함", *SNOW_DEPTH])
-        comment = st.text_area(
-            "상세 내용",
-            max_chars=180,
-            placeholder="예: 통제 안내판 있음, 체인 차량만 통과 중",
-            height=96,
-        )
-        photos = st.file_uploader(
-            "현장 사진",
-            type=["png", "jpg", "jpeg", "webp"],
-            accept_multiple_files=True,
-            key=f"report_photos_{nonce}_{location_signature}",
-        )
+        type_col, vehicle_col = st.columns(2, gap="medium")
+        with type_col:
+            report_type = st.selectbox(
+                "위험 유형",
+                options=type_ids,
+                format_func=lambda key: f"{TYPE_BY_ID[key]['icon']} {TYPE_BY_ID[key]['label']}",
+            )
+        with vehicle_col:
+            vehicle = st.selectbox(
+                "차량 정보",
+                options=vehicle_ids,
+                format_func=lambda key: f"{VEHICLE_BY_ID[key]['icon']} {VEHICLE_BY_ID[key]['label']}",
+            )
+
+        condition_col, detail_col = st.columns([0.82, 1.18], gap="medium")
+        with condition_col:
+            snow = st.selectbox("적설", options=["선택 안 함", *SNOW_DEPTH])
+            photos = st.file_uploader(
+                "현장 사진",
+                type=["png", "jpg", "jpeg", "webp"],
+                accept_multiple_files=True,
+                key=f"report_photos_{nonce}_{location_signature}",
+            )
+        with detail_col:
+            comment = st.text_area(
+                "상세 내용",
+                max_chars=180,
+                placeholder="예: 통제 안내판 있음, 체인 차량만 통과 중",
+                height=126,
+            )
         submitted = st.form_submit_button(
             "위험 제보 등록",
             type="primary",
@@ -3874,8 +4001,6 @@ def render_report_form() -> None:
 
 
 def render_idle_panel(reports: list[dict[str, Any]]) -> None:
-    render_report_form()
-    render_control_board(st.session_state.reports, compact=True)
     render_cctv_panel(key_suffix="home")
 
 
@@ -3896,6 +4021,8 @@ def main() -> None:
     main_col, panel_col = st.columns([0.74, 0.26], gap="medium")
 
     with main_col:
+        with st.container(key="central_report_composer"):
+            render_report_form()
         fmap = build_map(reports)
         map_data = st_folium(
             fmap,
