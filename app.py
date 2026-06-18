@@ -35,12 +35,12 @@ APP_DIR = Path(__file__).resolve().parent
 ROAD_MATCH_THRESHOLD_KM = 1.0
 ROAD_CLICK_THRESHOLD_KM = 0.35
 CONFIRM_COOLDOWN_HOURS = 4
-DANGER_HEAT_MAX_WEIGHT = 8.5
+DANGER_HEAT_MAX_WEIGHT = 7.2
 DANGER_HEAT_GRADIENT = {
-    0.18: "#fee2e2",
-    0.38: "#fb923c",
-    0.62: "#ef4444",
-    0.84: "#b91c1c",
+    0.12: "#fecaca",
+    0.32: "#fb923c",
+    0.56: "#ef4444",
+    0.78: "#b91c1c",
     1.00: "#7f1d1d",
 }
 SAFE_HEAT_MAX_WEIGHT = 6.0
@@ -1319,8 +1319,8 @@ def css() -> None:
         .st-key-central_report_composer {{
             position: relative;
             overflow: hidden;
-            margin-bottom: .62rem;
-            padding: .72rem .82rem .66rem;
+            margin-bottom: .5rem;
+            padding: .58rem .68rem .56rem;
             border: 1px solid color-mix(in srgb, #dc2626 26%, var(--border));
             border-radius: 10px;
             background:
@@ -1339,15 +1339,15 @@ def css() -> None:
         .report-composer-hero {{
             display: grid;
             grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr);
-            gap: .55rem;
-            margin-bottom: .55rem;
+            gap: .42rem;
+            margin-bottom: .42rem;
         }}
         .report-composer-intro,
         .report-composer-location {{
             min-width: 0;
             border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
             border-radius: 8px;
-            padding: .58rem .68rem;
+            padding: .44rem .56rem;
             background: color-mix(in srgb, var(--panel) 82%, transparent);
             backdrop-filter: blur(8px);
         }}
@@ -1368,38 +1368,38 @@ def css() -> None:
         }}
         .report-composer-title {{
             color: var(--text);
-            font-size: 1.05rem;
+            font-size: .98rem;
             line-height: 1.22;
             font-weight: 950;
         }}
         .report-composer-copy {{
             color: var(--muted);
-            font-size: .73rem;
-            line-height: 1.34;
-            margin-top: .12rem;
+            font-size: .69rem;
+            line-height: 1.25;
+            margin-top: .08rem;
         }}
         .report-location-kicker {{
             color: var(--selected-color);
-            font-size: .68rem;
+            font-size: .65rem;
             font-weight: 950;
         }}
         .report-location-name {{
             color: var(--text);
-            font-size: .95rem;
+            font-size: .9rem;
             line-height: 1.24;
             font-weight: 950;
-            margin-top: .08rem;
+            margin-top: .04rem;
             overflow-wrap: anywhere;
         }}
         .report-location-meta {{
             color: var(--muted);
-            font-size: .69rem;
-            line-height: 1.32;
-            margin-top: .12rem;
+            font-size: .66rem;
+            line-height: 1.24;
+            margin-top: .08rem;
         }}
         .report-location-icon {{
-            width: 2.1rem;
-            height: 2.1rem;
+            width: 1.86rem;
+            height: 1.86rem;
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -1407,37 +1407,41 @@ def css() -> None:
             background: color-mix(in srgb, var(--selected-color) 15%, var(--panel));
             border: 1px solid color-mix(in srgb, var(--selected-color) 32%, var(--border));
             color: var(--selected-color);
-            font-size: 1.02rem;
+            font-size: .94rem;
         }}
         .st-key-central_report_composer div[data-testid="stForm"] {{
             border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
             border-radius: 8px;
-            padding: .62rem .68rem .6rem;
+            padding: .48rem .56rem .5rem;
             background: color-mix(in srgb, var(--panel) 86%, transparent);
         }}
         .st-key-central_report_composer div[data-testid="stForm"] label p {{
             color: var(--muted);
-            font-size: .71rem;
+            font-size: .68rem;
             font-weight: 850;
         }}
         .st-key-central_report_composer div[data-testid="stSelectbox"] {{
             margin-bottom: 0;
         }}
         .st-key-central_report_composer textarea {{
-            min-height: 96px !important;
+            min-height: 68px !important;
+            height: 68px !important;
+        }}
+        .st-key-central_report_composer [data-testid="stTextArea"] {{
+            margin-bottom: 0;
         }}
         .st-key-central_report_composer [data-testid="stFileUploaderDropzone"] {{
-            min-height: 2.65rem;
-            padding: .34rem .48rem;
+            min-height: 2.25rem;
+            padding: .22rem .42rem;
         }}
         .st-key-central_report_composer [data-testid="stFileUploaderDropzoneInstructions"] {{
             display: none;
         }}
         .st-key-central_report_composer [data-testid="stFileUploaderDropzone"] button {{
-            min-height: 1.95rem;
+            min-height: 1.75rem;
         }}
         .st-key-central_report_composer div[data-testid="stFormSubmitButton"] button {{
-            min-height: 2.45rem;
+            min-height: 2.22rem;
             border: 0;
             background: linear-gradient(100deg, #dc2626, #ea580c);
             box-shadow: 0 9px 22px rgba(220, 38, 38, .2);
@@ -1479,16 +1483,16 @@ def css() -> None:
                 box-shadow: 0 14px 36px var(--shadow);
             }}
             .st-key-central_report_composer {{
-                padding: .62rem .64rem .6rem;
+                padding: .5rem .54rem .5rem;
                 border-radius: 10px;
-                margin-bottom: .58rem;
+                margin-bottom: .5rem;
             }}
             .report-composer-intro,
             .report-composer-location {{
-                padding: .52rem .58rem;
+                padding: .44rem .5rem;
             }}
             .report-composer-title {{
-                font-size: 1rem;
+                font-size: .94rem;
             }}
             .st-key-map_canvas iframe {{
                 height: clamp(360px, 52vh, 440px) !important;
@@ -2932,6 +2936,64 @@ def safe_heatmap_points(reports: list[dict[str, Any]]) -> list[list[float]]:
     return points
 
 
+def add_report_heat_layers(fmap: folium.Map, reports: list[dict[str, Any]]) -> None:
+    heat_data = heatmap_points(reports)
+    if heat_data:
+        HeatMap(
+            heat_data,
+            name="제보 기준 위험 히트맵",
+            min_opacity=0.36,
+            radius=46,
+            blur=30,
+            gradient=DANGER_HEAT_GRADIENT,
+            overlay=True,
+            control=True,
+            show=True,
+            max_zoom=13,
+        ).add_to(fmap)
+
+    heat_halos = folium.FeatureGroup(
+        name="제보 위험 확산",
+        overlay=True,
+        control=True,
+        show=True,
+    )
+    for report in reports:
+        weight = report_heat_weight(report)
+        if weight <= 0:
+            continue
+        intensity = max(0.0, min(1.0, weight / DANGER_HEAT_MAX_WEIGHT))
+        radius = 360 + intensity * 520
+        folium.Circle(
+            location=[float(report["lat"]), float(report["lng"])],
+            radius=radius,
+            color=danger_color_for_type(report["type"]),
+            weight=0,
+            fill=True,
+            fill_color=danger_color_for_type(report["type"]),
+            fill_opacity=0.12 + intensity * 0.16,
+            interactive=False,
+        ).add_to(heat_halos)
+    heat_halos.add_to(fmap)
+
+
+def add_safe_heat_layer(fmap: folium.Map, reports: list[dict[str, Any]]) -> None:
+    safe_heat_data = safe_heatmap_points(reports)
+    if not safe_heat_data:
+        return
+    HeatMap(
+        safe_heat_data,
+        name="통행 가능 히트맵",
+        min_opacity=0.2,
+        radius=32,
+        blur=24,
+        gradient=SAFE_HEAT_GRADIENT,
+        overlay=True,
+        control=True,
+        show=True,
+    ).add_to(fmap)
+
+
 def status_for_related_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     if not reports:
         return {
@@ -3546,34 +3608,6 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
     elif db_road_error:
         st.caption(db_road_error)
 
-    safe_heat_data = safe_heatmap_points(reports)
-    if safe_heat_data:
-        HeatMap(
-            safe_heat_data,
-            name="통행 가능 히트맵",
-            min_opacity=0.18,
-            radius=30,
-            blur=24,
-            gradient=SAFE_HEAT_GRADIENT,
-            overlay=True,
-            control=False,
-            show=True,
-        ).add_to(fmap)
-
-    heat_data = heatmap_points(reports)
-    if heat_data:
-        HeatMap(
-            heat_data,
-            name="위험 히트맵",
-            min_opacity=0.22,
-            radius=34,
-            blur=26,
-            gradient=DANGER_HEAT_GRADIENT,
-            overlay=True,
-            control=False,
-            show=True,
-        ).add_to(fmap)
-
     if not db_roads["features"]:
         for road in road_statuses(st.session_state.reports):
             terrain_score = float(road.get("terrain_score", 0))
@@ -3594,6 +3628,9 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
                 opacity=line_opacity,
                 tooltip=tooltip,
             ).add_to(fmap)
+
+    add_safe_heat_layer(fmap, reports)
+    add_report_heat_layers(fmap, reports)
 
     for report in reports:
         type_info = TYPE_BY_ID[report["type"]]
@@ -3621,8 +3658,7 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
             icon=folium.DivIcon(html=report_marker_html(report)),
         ).add_to(fmap)
 
-    if db_roads["features"]:
-        folium.LayerControl(collapsed=True).add_to(fmap)
+    folium.LayerControl(collapsed=False).add_to(fmap)
 
     return fmap
 
@@ -4204,7 +4240,7 @@ def render_report_form() -> None:
                 "상세 내용",
                 max_chars=180,
                 placeholder="예: 통제 안내판 있음, 체인 차량만 통과 중",
-                height=96,
+                height=68,
             )
         with photo_col:
             photos = st.file_uploader(
