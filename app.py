@@ -28,6 +28,7 @@ WEATHER_POINT = {
     "lng": JEJU_CENTER["lng"],
 }
 WEATHER_REFRESH_SECONDS = 15 * 60
+OTHER_ROAD_NAME = "기타도로"
 APP_DIR = Path(__file__).resolve().parent
 ROAD_MATCH_THRESHOLD_KM = 1.0
 ROAD_CLICK_THRESHOLD_KM = 0.35
@@ -40,10 +41,25 @@ DANGER_HEAT_GRADIENT = {
     0.84: "#b91c1c",
     1.00: "#7f1d1d",
 }
+SAFE_HEAT_MAX_WEIGHT = 6.0
+SAFE_HEAT_GRADIENT = {
+    0.20: "#dcfce7",
+    0.42: "#86efac",
+    0.66: "#22c55e",
+    0.86: "#16a34a",
+    1.00: "#166534",
+}
 ROAD_DB_URL_ENV_KEYS = ("PGIS_DATABASE_URL", "DATABASE_URL", "POSTGRES_URL")
 ROAD_DB_TABLE = os.getenv("PGIS_ROAD_TABLE", "jeju_important")
 ROAD_DB_NAME_FIELD = os.getenv("PGIS_ROAD_NAME_FIELD", "rn")
 ROAD_DB_LAYER_LABEL = os.getenv("PGIS_ROAD_LAYER_LABEL", "DB 도로망")
+REPORT_DB_URL_ENV_KEYS = (
+    "PGIS_REPORT_DATABASE_URL",
+    "PGIS_DATABASE_URL",
+    "DATABASE_URL",
+    "POSTGRES_URL",
+)
+REPORT_DB_TABLE = os.getenv("PGIS_REPORT_TABLE", "pgis_reports")
 TERRAIN_SCORE_PATH = os.getenv(
     "PGIS_TERRAIN_SCORE_PATH",
     str(APP_DIR / "data" / "road_terrain_scores.json"),
@@ -107,6 +123,7 @@ def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 ROAD_DB_LIMIT = env_int("PGIS_ROAD_LIMIT", 2500, 1, 20000)
 ROAD_DB_SOURCE_SRID = env_int("PGIS_ROAD_SOURCE_SRID", 5179, 1, 999999)
+REPORT_DB_LIMIT = env_int("PGIS_REPORT_LIMIT", 500, 1, 5000)
 
 REPORT_TYPES = [
     {
@@ -1122,6 +1139,52 @@ def css() -> None:
             font-size: .78rem;
             margin-bottom: .55rem;
         }}
+        .selected-road-card {{
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: .65rem;
+            color: var(--text);
+            background:
+                linear-gradient(135deg, color-mix(in srgb, var(--selected-color) 16%, transparent), transparent 58%),
+                var(--panel);
+            border: 1px solid color-mix(in srgb, var(--selected-color) 44%, var(--border));
+            border-left: 5px solid var(--selected-color);
+            border-radius: 8px;
+            padding: .76rem .82rem;
+            margin-bottom: .62rem;
+            box-shadow: 0 10px 26px var(--shadow);
+        }}
+        .selected-road-kicker {{
+            color: var(--selected-color);
+            font-size: .7rem;
+            font-weight: 950;
+        }}
+        .selected-road-name {{
+            color: var(--text);
+            font-size: 1.14rem;
+            line-height: 1.2;
+            font-weight: 950;
+            margin-top: .1rem;
+            overflow-wrap: anywhere;
+        }}
+        .selected-road-meta {{
+            color: var(--muted);
+            font-size: .72rem;
+            line-height: 1.35;
+            margin-top: .18rem;
+        }}
+        .selected-road-icon {{
+            width: 2.25rem;
+            height: 2.25rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--selected-color) 16%, var(--panel));
+            border: 1px solid color-mix(in srgb, var(--selected-color) 34%, var(--border));
+            font-size: 1.12rem;
+        }}
         .st-key-theme_light_sidebar button,
         .st-key-theme_dark_sidebar button {{
             min-height: 2.05rem;
@@ -1142,8 +1205,12 @@ def css() -> None:
 
 
 def init_state() -> None:
+    if "reports" not in st.session_state:
+        loaded_reports, storage_error = load_initial_reports()
+        st.session_state.reports = loaded_reports
+        st.session_state.report_storage_error = storage_error
+
     defaults = {
-        "reports": deepcopy(SAMPLE_REPORTS),
         "active_filters": [item["id"] for item in REPORT_TYPES],
         "theme_mode": "light",
         "tourist_mode": False,
@@ -1154,6 +1221,7 @@ def init_state() -> None:
         "confirm_locks": {},
         "report_photo_nonce": 0,
         "comment_photo_nonce": {},
+        "report_storage_error": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -1165,8 +1233,10 @@ def init_state() -> None:
         report.setdefault("confirms", 0)
         report.setdefault("verified", False)
         report.setdefault("road", report_road_name(report))
+        report.setdefault("persisted", False)
         for comment in report["comments"]:
-            comment.setdefault("photos", [])
+            if isinstance(comment, dict):
+                comment.setdefault("photos", [])
 
     for item in REPORT_TYPES:
         key = f"filter_{item['id']}"
@@ -1306,6 +1376,325 @@ def sql_identifier(table_or_column: str) -> Any:
     if not parts or any(not IDENTIFIER_RE.match(part) for part in parts):
         raise ValueError(f"잘못된 DB 식별자: {table_or_column}")
     return sql.Identifier(*parts)
+
+
+def normalize_database_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    url = value.strip()
+    if not url:
+        return None
+
+    # 붙여넣기 과정에서 같은 postgres URL이 이어붙은 경우 첫 URL만 사용한다.
+    for prefix in ("postgres://", "postgresql://"):
+        repeated_at = url.find(prefix, len(prefix))
+        if repeated_at > 0:
+            url = url[:repeated_at]
+            break
+    return url
+
+
+def report_database_url() -> str | None:
+    for key in REPORT_DB_URL_ENV_KEYS:
+        value = normalize_database_url(os.getenv(key))
+        if value:
+            return value
+    return None
+
+
+def report_index_identifier(suffix: str) -> Any:
+    from psycopg2 import sql
+
+    table_tail = REPORT_DB_TABLE.split(".")[-1]
+    safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", table_tail).strip("_") or "pgis_reports"
+    return sql.Identifier(f"{safe_name}_{suffix}"[:63])
+
+
+def ensure_report_table() -> tuple[bool, str | None]:
+    db_url = report_database_url()
+    if not db_url:
+        return False, None
+
+    try:
+        import psycopg2
+        from psycopg2 import sql
+    except ImportError:
+        return False, "PostgreSQL 저장 패키지(psycopg2-binary)가 설치되지 않았습니다."
+
+    try:
+        table_identifier = sql_identifier(REPORT_DB_TABLE)
+    except ValueError as exc:
+        return False, str(exc)
+
+    try:
+        with psycopg2.connect(db_url, connect_timeout=6) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {table} (
+                            id BIGSERIAL PRIMARY KEY,
+                            report_type TEXT NOT NULL,
+                            lat DOUBLE PRECISION NOT NULL CHECK (lat BETWEEN -90 AND 90),
+                            lng DOUBLE PRECISION NOT NULL CHECK (lng BETWEEN -180 AND 180),
+                            geom geometry(Point, 4326),
+                            road TEXT NOT NULL,
+                            road_id TEXT,
+                            vehicle TEXT,
+                            snow TEXT,
+                            comment TEXT NOT NULL DEFAULT '',
+                            reporter TEXT NOT NULL DEFAULT '현장 제보자',
+                            photos JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            comments JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            confirms INTEGER NOT NULL DEFAULT 0,
+                            verified BOOLEAN NOT NULL DEFAULT false,
+                            reported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                            source TEXT NOT NULL DEFAULT 'streamlit'
+                        )
+                        """
+                    ).format(table=table_identifier)
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {idx} ON {table} USING GIST (geom)"
+                    ).format(
+                        idx=report_index_identifier("geom_idx"),
+                        table=table_identifier,
+                    )
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {idx} ON {table} (reported_at DESC)"
+                    ).format(
+                        idx=report_index_identifier("reported_at_idx"),
+                        table=table_identifier,
+                    )
+                )
+                cursor.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {table} (road)").format(
+                        idx=report_index_identifier("road_idx"),
+                        table=table_identifier,
+                    )
+                )
+    except Exception as exc:
+        return False, f"제보 DB 테이블을 준비하지 못했습니다: {exc}"
+
+    return True, None
+
+
+def db_report_to_app(row: dict[str, Any]) -> dict[str, Any]:
+    reported_at = row.get("reported_at")
+    if isinstance(reported_at, datetime):
+        display_time = reported_at.astimezone().strftime("%H:%M")
+    else:
+        display_time = datetime.now().strftime("%H:%M")
+
+    photos = row.get("photos")
+    comments = row.get("comments")
+    return {
+        "id": int(row["id"]),
+        "type": str(row["report_type"]),
+        "lat": float(row["lat"]),
+        "lng": float(row["lng"]),
+        "road": str(row.get("road") or OTHER_ROAD_NAME),
+        "road_id": str(row.get("road_id") or ""),
+        "vehicle": str(row.get("vehicle") or "sedan"),
+        "snow": row.get("snow"),
+        "comment": str(row.get("comment") or ""),
+        "time": display_time,
+        "confirms": int(row.get("confirms") or 0),
+        "verified": bool(row.get("verified")),
+        "reporter": str(row.get("reporter") or "현장 제보자"),
+        "photos": photos if isinstance(photos, list) else [],
+        "comments": comments if isinstance(comments, list) else [],
+        "persisted": True,
+        "storage_id": int(row["id"]),
+    }
+
+
+def load_db_reports() -> tuple[list[dict[str, Any]], str | None]:
+    ready, error = ensure_report_table()
+    if error:
+        return [], error
+    if not ready:
+        return [], None
+
+    try:
+        import psycopg2
+        import psycopg2.extras
+        from psycopg2 import sql
+    except ImportError:
+        return [], "PostgreSQL 저장 패키지(psycopg2-binary)가 설치되지 않았습니다."
+
+    db_url = report_database_url()
+    if not db_url:
+        return [], None
+
+    try:
+        with psycopg2.connect(db_url, connect_timeout=6) as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            id, report_type, lat, lng, road, road_id, vehicle, snow,
+                            comment, reporter, photos, comments, confirms, verified, reported_at
+                        FROM {table}
+                        ORDER BY reported_at DESC, id DESC
+                        LIMIT %s
+                        """
+                    ).format(table=sql_identifier(REPORT_DB_TABLE)),
+                    (REPORT_DB_LIMIT,),
+                )
+                rows = cursor.fetchall()
+    except Exception as exc:
+        return [], f"제보 DB를 읽지 못했습니다: {exc}"
+
+    reports = [db_report_to_app(dict(row)) for row in rows]
+    for report in reports:
+        for comment in report["comments"]:
+            if isinstance(comment, dict):
+                comment.setdefault("photos", [])
+    return reports, None
+
+
+def load_initial_reports() -> tuple[list[dict[str, Any]], str | None]:
+    if not report_database_url():
+        return deepcopy(SAMPLE_REPORTS), None
+
+    reports, error = load_db_reports()
+    if error:
+        return deepcopy(SAMPLE_REPORTS), error
+    return reports, None
+
+
+def insert_report_to_db(report: dict[str, Any]) -> tuple[int | None, str | None]:
+    ready, error = ensure_report_table()
+    if error:
+        return None, error
+    if not ready:
+        return None, None
+
+    try:
+        import psycopg2
+        from psycopg2 import sql
+        from psycopg2.extras import Json
+    except ImportError:
+        return None, "PostgreSQL 저장 패키지(psycopg2-binary)가 설치되지 않았습니다."
+
+    db_url = report_database_url()
+    if not db_url:
+        return None, None
+
+    try:
+        with psycopg2.connect(db_url, connect_timeout=6) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {table} (
+                            report_type, lat, lng, geom, road, road_id, vehicle, snow,
+                            comment, reporter, photos, comments, confirms, verified, source
+                        )
+                        VALUES (
+                            %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326),
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'streamlit'
+                        )
+                        RETURNING id
+                        """
+                    ).format(table=sql_identifier(REPORT_DB_TABLE)),
+                    (
+                        report["type"],
+                        float(report["lat"]),
+                        float(report["lng"]),
+                        float(report["lng"]),
+                        float(report["lat"]),
+                        report_road_name(report),
+                        report.get("road_id") or None,
+                        report.get("vehicle"),
+                        report.get("snow"),
+                        report.get("comment", ""),
+                        report.get("reporter", "현장 제보자"),
+                        Json(report.get("photos", [])),
+                        Json(report.get("comments", [])),
+                        int(report.get("confirms", 0)),
+                        bool(report.get("verified", False)),
+                    ),
+                )
+                db_id = cursor.fetchone()[0]
+    except Exception as exc:
+        return None, f"제보를 DB에 저장하지 못했습니다: {exc}"
+
+    return int(db_id), None
+
+
+def update_report_comments_in_db(report: dict[str, Any]) -> str | None:
+    if not report.get("persisted"):
+        return None
+    ready, error = ensure_report_table()
+    if error or not ready:
+        return error
+
+    try:
+        import psycopg2
+        from psycopg2 import sql
+        from psycopg2.extras import Json
+    except ImportError:
+        return "PostgreSQL 저장 패키지(psycopg2-binary)가 설치되지 않았습니다."
+
+    try:
+        with psycopg2.connect(report_database_url(), connect_timeout=6) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {table}
+                        SET comments = %s, updated_at = now()
+                        WHERE id = %s
+                        """
+                    ).format(table=sql_identifier(REPORT_DB_TABLE)),
+                    (Json(report.get("comments", [])), int(report.get("storage_id", report["id"]))),
+                )
+    except Exception as exc:
+        return f"댓글을 DB에 저장하지 못했습니다: {exc}"
+    return None
+
+
+def update_report_confirmation_in_db(report: dict[str, Any]) -> str | None:
+    if not report.get("persisted"):
+        return None
+    ready, error = ensure_report_table()
+    if error or not ready:
+        return error
+
+    try:
+        import psycopg2
+        from psycopg2 import sql
+    except ImportError:
+        return "PostgreSQL 저장 패키지(psycopg2-binary)가 설치되지 않았습니다."
+
+    try:
+        with psycopg2.connect(report_database_url(), connect_timeout=6) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {table}
+                        SET confirms = %s, verified = %s, updated_at = now()
+                        WHERE id = %s
+                        """
+                    ).format(table=sql_identifier(REPORT_DB_TABLE)),
+                    (
+                        int(report.get("confirms", 0)),
+                        bool(report.get("verified", False)),
+                        int(report.get("storage_id", report["id"])),
+                    ),
+                )
+    except Exception as exc:
+        return f"확인 상태를 DB에 저장하지 못했습니다: {exc}"
+    return None
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -2181,6 +2570,30 @@ def heatmap_points(reports: list[dict[str, Any]]) -> list[list[float]]:
     return points
 
 
+def safe_heat_weight(report: dict[str, Any]) -> float:
+    if report.get("type") != "cleared":
+        return 0.0
+
+    confirms = min(int(report.get("confirms", 0)), 8)
+    weight = 2.6 + confirms * 0.32
+    if report.get("verified"):
+        weight += 0.9
+    if photo_count(report):
+        weight += 0.35
+    return weight
+
+
+def safe_heatmap_points(reports: list[dict[str, Any]]) -> list[list[float]]:
+    points: list[list[float]] = []
+    for report in reports:
+        weight = safe_heat_weight(report)
+        if weight <= 0:
+            continue
+        normalized = max(0.24, min(1.0, weight / SAFE_HEAT_MAX_WEIGHT))
+        points.append([float(report["lat"]), float(report["lng"]), normalized])
+    return points
+
+
 def status_for_related_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     if not reports:
         return {
@@ -2762,6 +3175,20 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
     elif db_road_error:
         st.caption(db_road_error)
 
+    safe_heat_data = safe_heatmap_points(reports)
+    if safe_heat_data:
+        HeatMap(
+            safe_heat_data,
+            name="통행 가능 히트맵",
+            min_opacity=0.18,
+            radius=30,
+            blur=24,
+            gradient=SAFE_HEAT_GRADIENT,
+            overlay=True,
+            control=False,
+            show=True,
+        ).add_to(fmap)
+
     heat_data = heatmap_points(reports)
     if heat_data:
         HeatMap(
@@ -2895,6 +3322,10 @@ def start_report_from_road_feature(feature: dict[str, Any]) -> bool:
     return True
 
 
+def start_report_from_free_point(lat: float, lng: float) -> None:
+    start_report_at(lat, lng, road_name=OTHER_ROAD_NAME)
+
+
 def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, Any]]) -> None:
     if not map_data:
         return
@@ -2922,11 +3353,20 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
             if road:
                 start_report_at(lat, lng, road_name=road["name"], road_id=road["id"])
                 st.rerun()
+            start_report_from_free_point(lat, lng)
+            st.rerun()
 
     clicked = map_data.get("last_clicked")
     if clicked:
         lat = float(clicked["lat"])
         lng = float(clicked["lng"])
+        if object_clicked:
+            object_lat = float(object_clicked["lat"])
+            object_lng = float(object_clicked["lng"])
+            object_signature = f"object:{object_lat:.5f}:{object_lng:.5f}"
+            same_object_point = abs(object_lat - lat) < 0.00001 and abs(object_lng - lng) < 0.00001
+            if same_object_point and st.session_state.last_map_signature == object_signature:
+                return
         signature = f"map:{lat:.5f}:{lng:.5f}"
         if st.session_state.last_map_signature != signature:
             st.session_state.last_map_signature = signature
@@ -2938,6 +3378,8 @@ def handle_map_event(map_data: dict[str, Any] | None, reports: list[dict[str, An
             if road:
                 start_report_at(lat, lng, road_name=road["name"], road_id=road["id"])
                 st.rerun()
+            start_report_from_free_point(lat, lng)
+            st.rerun()
 
 
 def timeline_card(report: dict[str, Any], tourist_mode: bool = False) -> str:
@@ -3079,7 +3521,8 @@ def add_report_comment(report_id: int, text: str, files: list[Any] | None) -> No
 
     for report in st.session_state.reports:
         if int(report["id"]) == report_id:
-            report.setdefault("comments", []).append(
+            report.setdefault("comments", [])
+            report["comments"].append(
                 {
                     "time": datetime.now().strftime("%H:%M"),
                     "author": "현장 댓글",
@@ -3087,6 +3530,10 @@ def add_report_comment(report_id: int, text: str, files: list[Any] | None) -> No
                     "photos": photos,
                 }
             )
+            storage_error = update_report_comments_in_db(report)
+            if storage_error:
+                st.session_state.report_storage_error = storage_error
+                st.warning(storage_error)
             st.session_state.comment_photo_nonce[str(report_id)] = (
                 st.session_state.comment_photo_nonce.get(str(report_id), 0) + 1
             )
@@ -3132,6 +3579,10 @@ def confirm_report(report_id: int) -> None:
             st.session_state.confirm_locks[str(report_id)] = datetime.now().isoformat(
                 timespec="seconds"
             )
+            storage_error = update_report_confirmation_in_db(report)
+            if storage_error:
+                st.session_state.report_storage_error = storage_error
+                st.warning(storage_error)
             st.toast("현장 확인이 반영되었습니다.")
             break
 
@@ -3261,28 +3712,39 @@ def submit_report(
         road_name, distance = nearest_road(lat, lng)
         if distance > ROAD_MATCH_THRESHOLD_KM:
             road_name = "직접 지정 위치"
-    new_id = max((int(report["id"]) for report in st.session_state.reports), default=0) + 1
-    st.session_state.reports.append(
-        {
-            "id": new_id,
-            "type": report_type,
-            "lat": float(lat),
-            "lng": float(lng),
-            "road": road_name,
-            "road_id": road_id,
-            "vehicle": vehicle,
-            "snow": None if snow == "선택 안 함" else snow,
-            "comment": comment.strip() or "현장 도로 상태 제보",
-            "time": datetime.now().strftime("%H:%M"),
-            "confirms": 0,
-            "verified": False,
-            "reporter": "현장 제보자",
-            "photos": files_to_photos(files),
-            "comments": [],
-        }
-    )
+    local_id = max((int(report["id"]) for report in st.session_state.reports), default=0) + 1
+    new_report = {
+        "id": local_id,
+        "type": report_type,
+        "lat": float(lat),
+        "lng": float(lng),
+        "road": road_name,
+        "road_id": road_id,
+        "vehicle": vehicle,
+        "snow": None if snow == "선택 안 함" else snow,
+        "comment": comment.strip() or "현장 도로 상태 제보",
+        "time": datetime.now().strftime("%H:%M"),
+        "confirms": 0,
+        "verified": False,
+        "reporter": "현장 제보자",
+        "photos": files_to_photos(files),
+        "comments": [],
+        "persisted": False,
+    }
+
+    db_id, storage_error = insert_report_to_db(new_report)
+    if storage_error:
+        st.session_state.report_storage_error = storage_error
+        st.warning(storage_error)
+    if db_id is not None:
+        existing_ids = {int(report["id"]) for report in st.session_state.reports}
+        new_report["id"] = db_id if db_id not in existing_ids else local_id
+        new_report["storage_id"] = db_id
+        new_report["persisted"] = True
+
+    st.session_state.reports.append(new_report)
     st.session_state.reporting_location = None
-    st.session_state.selected_report_id = new_id
+    st.session_state.selected_report_id = int(new_report["id"])
     st.session_state.report_photo_nonce += 1
     st.toast("새 제보가 등록되었습니다.")
 
@@ -3296,13 +3758,33 @@ def render_report_form() -> None:
     selected_road = location.get("road_name") if isinstance(location, dict) else None
     selected_road_id = location.get("road_id") if isinstance(location, dict) else None
     has_selected_road = bool(selected_road)
+    lat = float(location["lat"])
+    lng = float(location["lng"])
+    is_other_road = selected_road == OTHER_ROAD_NAME
 
-    if has_selected_road:
+    if is_other_road:
+        location_source = "지도 선택 위치"
+        guide = "도로 선이 아닌 지점도 기타도로로 제보할 수 있습니다."
+        selected_color = "#2563eb"
+        selected_icon = "📍"
+        selected_name = f"({OTHER_ROAD_NAME})"
+        selected_meta = f"선택 좌표 {lat:.5f}, {lng:.5f} · 근처 도로가 없으면 이 이름으로 등록됩니다."
+    elif has_selected_road:
         location_source = "선택 도로"
         guide = "선택한 도로의 현재 상태를 바로 제보할 수 있습니다."
+        status = matching_status_for_road_name(str(selected_road))
+        selected_color = str(status["color"]) if status else "#0f766e"
+        selected_icon = "🛣️"
+        selected_name = str(selected_road)
+        status_text = f"현재 표시 상태 {status['status']} · " if status else ""
+        selected_meta = f"{status_text}선택 좌표 {lat:.5f}, {lng:.5f}"
     else:
         location_source = "도로 미선택"
-        guide = "지도에서 도로 선에 마우스를 올려 이름을 확인하고, 그 도로를 클릭해 제보를 시작하세요."
+        guide = "지도에서 도로 선이나 원하는 지점을 클릭하면 제보 위치가 먼저 선택됩니다."
+        selected_color = "#94a3b8"
+        selected_icon = "⌖"
+        selected_name = "지도에서 도로 또는 지점을 클릭해 주세요"
+        selected_meta = "도로 위 클릭은 도로명으로, 빈 지점 클릭은 기타도로로 등록됩니다."
 
     render_html(
         f"""
@@ -3311,13 +3793,18 @@ def render_report_form() -> None:
             <div class="report-entry-title">위험 제보 바로 등록</div>
             <div class="report-entry-copy">{escape(guide)}</div>
         </div>
-        <div class="form-location">{escape(location_source)} · {escape(str(selected_road or '지도에서 도로를 클릭해 주세요'))}</div>
+        <div class="selected-road-card" style="--selected-color:{selected_color};">
+            <div>
+                <div class="selected-road-kicker">{escape(location_source)}</div>
+                <div class="selected-road-name">{escape(selected_name)}</div>
+                <div class="selected-road-meta">{escape(selected_meta)}</div>
+            </div>
+            <div class="selected-road-icon">{selected_icon}</div>
+        </div>
         """
     )
 
     nonce = st.session_state.report_photo_nonce
-    lat = float(location["lat"])
-    lng = float(location["lng"])
     location_signature = f"{selected_road_id or selected_road or 'none'}_{lat:.5f}_{lng:.5f}"
     type_ids = [item["id"] for item in REPORT_TYPES]
     vehicle_ids = [item["id"] for item in VEHICLE_TYPES]
@@ -3351,7 +3838,7 @@ def render_report_form() -> None:
             type="primary",
             use_container_width=True,
             disabled=not has_selected_road,
-            help="지도에서 도로를 먼저 클릭해 주세요." if not has_selected_road else None,
+            help="지도에서 도로 또는 지점을 먼저 클릭해 주세요." if not has_selected_road else None,
         )
         if submitted:
             submit_report(
