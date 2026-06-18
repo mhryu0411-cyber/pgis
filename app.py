@@ -12,6 +12,7 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 from urllib.parse import unquote
+from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
 import folium
@@ -2114,7 +2115,13 @@ def kma_asos_service_key() -> str:
             key = str(st.secrets["KMA_ASOS_SERVICE_KEY"]).strip()
         except Exception:
             key = ""
-    return unquote(key)
+    key = key.strip().strip("\"'")
+    for _ in range(2):
+        decoded = unquote(key)
+        if decoded == key:
+            break
+        key = decoded
+    return key.strip()
 
 
 def asos_float(value: Any) -> float | None:
@@ -2194,7 +2201,7 @@ def asos_condition_meta(observation: dict[str, Any]) -> tuple[str, str]:
 
 
 @st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
-def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any] | None:
+def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
     end_day = datetime.now(ZoneInfo("Asia/Seoul")).date() - timedelta(days=1)
     start_day = end_day - timedelta(days=2)
     params = {
@@ -2212,15 +2219,52 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any] | None:
     }
     try:
         response = requests.get(KMA_ASOS_API_URL, params=params, timeout=8)
-        response.raise_for_status()
+    except requests.Timeout:
+        return {
+            "ok": False,
+            "error_code": "TIMEOUT",
+            "error_message": "기상청 API 응답 시간이 초과되었습니다.",
+        }
+    except requests.RequestException:
+        return {
+            "ok": False,
+            "error_code": "NETWORK",
+            "error_message": "기상청 API에 연결하지 못했습니다.",
+        }
+
+    if response.status_code != 200:
+        return {
+            "ok": False,
+            "error_code": f"HTTP_{response.status_code}",
+            "error_message": str(response.reason or "HTTP 오류"),
+        }
+
+    try:
         payload = response.json()
-    except (requests.RequestException, ValueError):
-        return None
+    except ValueError:
+        try:
+            root = ElementTree.fromstring(response.text)
+            result_code = (root.findtext(".//resultCode") or "").strip()
+            result_message = (root.findtext(".//resultMsg") or "").strip()
+        except ElementTree.ParseError:
+            result_code = ""
+            result_message = ""
+        return {
+            "ok": False,
+            "error_code": result_code or "INVALID_RESPONSE",
+            "error_message": result_message or "기상청 API 응답 형식을 읽지 못했습니다.",
+        }
 
     api_response = payload.get("response", {}) if isinstance(payload, dict) else {}
     header = api_response.get("header", {}) if isinstance(api_response, dict) else {}
-    if str(header.get("resultCode", "")) != "00":
-        return None
+    result_code = str(header.get("resultCode", "")).strip()
+    result_message = str(header.get("resultMsg", "")).strip()
+    if result_code != "00":
+        return {
+            "ok": False,
+            "error_code": result_code or "INVALID_RESPONSE",
+            "error_message": result_message or "기상청 API 요청이 거부되었습니다.",
+        }
 
     body = api_response.get("body", {})
     items_container = body.get("items", {}) if isinstance(body, dict) else {}
@@ -2228,13 +2272,46 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any] | None:
     if isinstance(items, dict):
         items = [items]
     if not isinstance(items, list):
-        return None
+        return {
+            "ok": False,
+            "error_code": "INVALID_ITEMS",
+            "error_message": "시간자료 목록 형식이 올바르지 않습니다.",
+        }
 
     observations = [item for item in items if isinstance(item, dict)]
     observations.sort(key=lambda item: parse_asos_time(item.get("tm")) or datetime.min)
     if not observations:
-        return None
-    return {"items": observations[-24:], "query_end": end_day.isoformat()}
+        return {
+            "ok": False,
+            "error_code": "NO_DATA",
+            "error_message": f"{start_day:%Y-%m-%d}~{end_day:%Y-%m-%d} 관측자료가 없습니다.",
+        }
+    return {
+        "ok": True,
+        "items": observations[-24:],
+        "query_end": end_day.isoformat(),
+    }
+
+
+def asos_error_detail(result: dict[str, Any]) -> str:
+    code = str(result.get("error_code", "UNKNOWN"))
+    message = str(result.get("error_message", "")).strip()
+    if code in {"HTTP_401", "HTTP_403", "20", "30"}:
+        return (
+            f"인증키가 거부되었습니다({code}). Railway 변수명을 "
+            "KMA_ASOS_SERVICE_KEY로 지정하고 값의 따옴표를 제거한 뒤 재배포해 주세요."
+        )
+    if code in {"HTTP_429", "21", "22"}:
+        return f"API 호출 한도를 초과했거나 키가 일시 정지되었습니다({code})."
+    if code in {"10", "11"}:
+        return f"기상청 요청값 오류입니다({code}). {message}"
+    if code == "NO_DATA":
+        return message
+    if code == "TIMEOUT":
+        return "기상청 API 응답이 지연되고 있습니다. 잠시 후 자동으로 다시 시도합니다."
+    if code == "NETWORK":
+        return "Railway 서버에서 기상청 API로 연결하지 못했습니다."
+    return f"기상청 API 오류 {code}: {message or '응답을 확인할 수 없습니다.'}"
 
 
 def render_asos_unavailable(message: str, detail: str) -> None:
@@ -2265,10 +2342,10 @@ def render_weather_panel() -> None:
         return
 
     weather = fetch_jeju_asos_hourly(service_key)
-    if not weather:
+    if not weather.get("ok"):
         render_asos_unavailable(
             "ASOS 관측자료 대기 중",
-            "인증키, 네트워크 또는 기상청 API 응답을 확인해 주세요.",
+            asos_error_detail(weather),
         )
         return
 
