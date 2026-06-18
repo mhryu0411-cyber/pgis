@@ -30,6 +30,8 @@ KMA_ASOS_API_URL = (
 KMA_ASOS_STATION_ID = os.getenv("KMA_ASOS_STATION_ID", "184")
 KMA_ASOS_STATION_NAME = os.getenv("KMA_ASOS_STATION_NAME", "제주")
 WEATHER_REFRESH_SECONDS = 15 * 60
+WEATHER_WINDOW_HOURS = 6
+WEATHER_QUERY_LOOKBACK_HOURS = 12
 OTHER_ROAD_NAME = "기타도로"
 APP_DIR = Path(__file__).resolve().parent
 ROAD_MATCH_THRESHOLD_KM = 1.0
@@ -2494,31 +2496,6 @@ def asos_value_text(value: Any, unit: str, digits: int = 1) -> str:
     return f"{number:.{digits}f}{unit}"
 
 
-def wind_direction_label(value: Any) -> str:
-    degrees = asos_float(value)
-    if degrees is None:
-        return ""
-    labels = (
-        "북",
-        "북북동",
-        "북동",
-        "동북동",
-        "동",
-        "동남동",
-        "남동",
-        "남남동",
-        "남",
-        "남남서",
-        "남서",
-        "서남서",
-        "서",
-        "서북서",
-        "북서",
-        "북북서",
-    )
-    return labels[int((degrees + 11.25) // 22.5) % 16]
-
-
 def asos_condition_meta(observation: dict[str, Any]) -> tuple[str, str]:
     new_snow = asos_float(observation.get("hr3Fhsc")) or 0.0
     snow_depth = asos_float(observation.get("dsnw")) or 0.0
@@ -2547,22 +2524,19 @@ def asos_condition_meta(observation: dict[str, Any]) -> tuple[str, str]:
 
 @st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
 def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
-    now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
-    # The official guide says D-1 observations become available after 11:00 KST.
-    data_delay_days = 1 if now_kst.hour >= 11 else 2
-    end_day = now_kst.date() - timedelta(days=data_delay_days)
-    start_day = end_day - timedelta(days=2)
+    now_kst = datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+    query_start = now_kst - timedelta(hours=WEATHER_QUERY_LOOKBACK_HOURS)
     params = {
         "serviceKey": service_key,
         "pageNo": 1,
-        "numOfRows": 72,
+        "numOfRows": 48,
         "dataType": "JSON",
         "dataCd": "ASOS",
         "dateCd": "HR",
-        "startDt": start_day.strftime("%Y%m%d"),
-        "startHh": "00",
-        "endDt": end_day.strftime("%Y%m%d"),
-        "endHh": "23",
+        "startDt": query_start.strftime("%Y%m%d"),
+        "startHh": query_start.strftime("%H"),
+        "endDt": now_kst.strftime("%Y%m%d"),
+        "endHh": now_kst.strftime("%H"),
         "stnIds": KMA_ASOS_STATION_ID,
     }
     try:
@@ -2633,12 +2607,42 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
         return {
             "ok": False,
             "error_code": "NO_DATA",
-            "error_message": f"{start_day:%Y-%m-%d}~{end_day:%Y-%m-%d} 관측자료가 없습니다.",
+            "error_message": (
+                f"{query_start:%Y-%m-%d %H시}~{now_kst:%Y-%m-%d %H시} "
+                "관측자료가 없습니다."
+            ),
         }
+
+    cutoff = now_kst - timedelta(hours=WEATHER_WINDOW_HOURS)
+    recent_observations = [
+        item
+        for item in observations
+        if (observed := parse_asos_time(item.get("tm"))) is not None
+        and cutoff <= observed <= now_kst + timedelta(minutes=5)
+    ]
+    if not recent_observations:
+        latest = observations[-1]
+        latest_observed = parse_asos_time(latest.get("tm"))
+        latest_text = (
+            latest_observed.strftime("%Y-%m-%d %H:%M")
+            if latest_observed
+            else str(latest.get("tm") or "확인 불가")
+        )
+        return {
+            "ok": False,
+            "error_code": "STALE_DATA",
+            "error_message": (
+                f"최근 {WEATHER_WINDOW_HOURS}시간 이내 관측이 없습니다. "
+                f"마지막 제공 관측은 {latest_text}입니다."
+            ),
+            "latest_observed": latest_text,
+        }
+
     return {
         "ok": True,
-        "items": observations[-24:],
-        "query_end": end_day.isoformat(),
+        "items": recent_observations[-WEATHER_WINDOW_HOURS:],
+        "query_start": query_start.isoformat(timespec="minutes"),
+        "query_end": now_kst.isoformat(timespec="minutes"),
     }
 
 
@@ -2659,6 +2663,8 @@ def asos_error_detail(result: dict[str, Any]) -> str:
     if code == "03":
         return "조회 기간에 제공 가능한 ASOS 시간자료가 없습니다(03)."
     if code == "NO_DATA":
+        return message
+    if code == "STALE_DATA":
         return message
     if code == "TIMEOUT":
         return "기상청 API 응답이 지연되고 있습니다. 잠시 후 자동으로 다시 시도합니다."
@@ -2711,10 +2717,6 @@ def render_weather_panel() -> None:
     temperature = asos_value_text(latest.get("ta"), "°")
     ground_temperature = asos_value_text(latest.get("ts"), "°")
     humidity = asos_value_text(latest.get("hm"), "%", digits=0)
-    wind = asos_value_text(latest.get("ws"), "m/s")
-    wind_direction = wind_direction_label(latest.get("wd"))
-    if wind_direction and wind != "-":
-        wind = f"{wind} · {wind_direction}"
     rain = asos_value_text(latest.get("rn"), "mm")
     snow_depth = asos_value_text(latest.get("dsnw"), "cm")
 
@@ -2748,7 +2750,7 @@ def render_weather_panel() -> None:
             <div class="weather-td">{escape(asos_value_text(item.get('dsnw'), 'cm'))}</div>
             """
         )
-        for item in reversed(observations[-12:])
+        for item in reversed(observations[-WEATHER_WINDOW_HOURS:])
     )
 
     render_html(
@@ -2765,16 +2767,15 @@ def render_weather_panel() -> None:
             <div class="weather-metrics">
                 <div class="weather-metric"><span>지면온도</span><strong>{escape(ground_temperature)}</strong></div>
                 <div class="weather-metric"><span>습도</span><strong>{escape(humidity)}</strong></div>
-                <div class="weather-metric"><span>바람</span><strong>{escape(wind)}</strong></div>
                 <div class="weather-metric"><span>강수 / 적설</span><strong>{escape(rain)} · {escape(snow_depth)}</strong></div>
             </div>
             <div class="weather-summary">
                 <div class="weather-summary-pill {observation_class}">
-                    <span>최근 24시간 기온</span>
+                    <span>최근 {WEATHER_WINDOW_HOURS}시간 기온</span>
                     <strong>{escape(temperature_range)}</strong>
                 </div>
                 <div class="weather-summary-pill {observation_class}">
-                    <span>강수 합계 / 최대 3시간 신적설</span>
+                    <span>강수 합계 / 최대 신적설</span>
                     <strong>{total_rain:.1f}mm · {max_new_snow:.1f}cm</strong>
                 </div>
             </div>
@@ -2785,7 +2786,7 @@ def render_weather_panel() -> None:
                 <div class="weather-th">적설</div>
                 {row_html}
             </div>
-            <div class="weather-source">기상청 ASOS 시간자료 · 최근 12개 시간 표시 · 전일(D-1)까지 제공 · 15분 캐시</div>
+            <div class="weather-source">기상청 ASOS 시간자료 · 최근 {WEATHER_WINDOW_HOURS}시간 이내 관측만 표시 · 15분 캐시</div>
         </div>
         """
     )
