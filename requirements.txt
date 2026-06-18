@@ -4,3 +4,4 @@ folium>=0.20.0
 psycopg2-binary>=2.9.10
 numpy>=1.26.0
 pillow>=10.0.0
+requests>=2.32.0

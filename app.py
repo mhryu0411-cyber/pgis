@@ -13,6 +13,7 @@ from textwrap import dedent
 from typing import Any
 
 import folium
+import requests
 import streamlit as st
 from branca.element import MacroElement, Template
 from folium.plugins import HeatMap
@@ -20,6 +21,13 @@ from streamlit_folium import st_folium
 
 
 JEJU_CENTER = {"lat": 33.3798, "lng": 126.5453}
+WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
+WEATHER_POINT = {
+    "name": "제주 중산간",
+    "lat": JEJU_CENTER["lat"],
+    "lng": JEJU_CENTER["lng"],
+}
+WEATHER_REFRESH_SECONDS = 15 * 60
 APP_DIR = Path(__file__).resolve().parent
 ROAD_MATCH_THRESHOLD_KM = 1.0
 ROAD_CLICK_THRESHOLD_KM = 0.35
@@ -654,6 +662,150 @@ def css() -> None:
             color: #fff;
             font-size: .76rem;
             font-weight: 900;
+        }}
+        .weather-card {{
+            background:
+                linear-gradient(135deg, rgba(14, 165, 233, .14), transparent 48%),
+                linear-gradient(315deg, rgba(22, 163, 74, .10), transparent 52%),
+                var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: .86rem;
+            box-shadow: 0 12px 34px var(--shadow);
+            margin-bottom: .8rem;
+        }}
+        .weather-head {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: .75rem;
+            margin-bottom: .68rem;
+        }}
+        .weather-kicker {{
+            color: #0284c7;
+            font-size: .72rem;
+            font-weight: 950;
+        }}
+        .weather-title {{
+            color: var(--text);
+            font-size: 1.08rem;
+            line-height: 1.22;
+            font-weight: 950;
+            margin-top: .1rem;
+        }}
+        .weather-place {{
+            color: var(--muted);
+            font-size: .72rem;
+            margin-top: .14rem;
+        }}
+        .weather-icon {{
+            width: 2.55rem;
+            height: 2.55rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            background: var(--panel-alt);
+            border: 1px solid var(--border);
+            font-size: 1.35rem;
+            flex: 0 0 auto;
+        }}
+        .weather-metrics {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: .42rem;
+            margin-bottom: .68rem;
+        }}
+        .weather-metric {{
+            background: color-mix(in srgb, var(--panel-alt) 78%, transparent);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: .5rem .56rem;
+            min-width: 0;
+        }}
+        .weather-metric span {{
+            display: block;
+            color: var(--muted);
+            font-size: .67rem;
+            font-weight: 800;
+        }}
+        .weather-metric strong {{
+            display: block;
+            color: var(--text);
+            font-size: .84rem;
+            line-height: 1.25;
+            margin-top: .14rem;
+            overflow-wrap: anywhere;
+        }}
+        .weather-summary {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: .42rem;
+            margin-bottom: .58rem;
+        }}
+        .weather-summary-pill {{
+            border-radius: 8px;
+            padding: .48rem .55rem;
+            border: 1px solid color-mix(in srgb, var(--snow-color) 38%, var(--border));
+            background: color-mix(in srgb, var(--snow-color) 10%, var(--panel));
+        }}
+        .weather-summary-pill span {{
+            display: block;
+            color: var(--muted);
+            font-size: .66rem;
+            font-weight: 850;
+        }}
+        .weather-summary-pill strong {{
+            display: block;
+            color: var(--text);
+            font-size: .86rem;
+            margin-top: .1rem;
+        }}
+        .weather-table {{
+            display: grid;
+            grid-template-columns: minmax(4.1rem, 1fr) minmax(3.2rem, .66fr) minmax(3.5rem, .72fr) minmax(4.2rem, .9fr);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }}
+        .weather-th,
+        .weather-td {{
+            padding: .4rem .43rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+            font-size: .69rem;
+            line-height: 1.25;
+        }}
+        .weather-th {{
+            background: var(--panel-alt);
+            color: var(--muted);
+            font-weight: 900;
+        }}
+        .weather-td {{
+            background: color-mix(in srgb, var(--panel) 88%, transparent);
+            min-width: 0;
+        }}
+        .weather-table .weather-td:nth-last-child(-n + 4) {{
+            border-bottom: 0;
+        }}
+        .snow-chip {{
+            display: inline-flex;
+            justify-content: center;
+            min-width: 2.45rem;
+            border-radius: 999px;
+            padding: .13rem .34rem;
+            color: #fff;
+            background: var(--snow-color);
+            font-weight: 950;
+        }}
+        .snow-low {{ --snow-color: #0ea5e9; }}
+        .snow-mid {{ --snow-color: #2563eb; }}
+        .snow-high {{ --snow-color: #dc2626; }}
+        .snow-calm {{ --snow-color: #64748b; }}
+        .weather-source {{
+            color: var(--muted);
+            font-size: .66rem;
+            margin-top: .42rem;
         }}
         .road-card, .type-card, .timeline-card, .detail-card, .report-entry-card, .comment-card, .photo-tile {{
             background: var(--panel);
@@ -1563,6 +1715,349 @@ def render_cctv_panel(road_name: str | None = None, key_suffix: str = "home") ->
         st.caption(f"{road_name} 주변 확인용으로 우선 추천된 CCTV입니다.")
     else:
         st.caption("원본 제공: 제주 재난안전대책본부 적설감시 CCTV")
+
+
+WEATHER_CODE_META = {
+    0: ("맑음", "☀️"),
+    1: ("대체로 맑음", "🌤️"),
+    2: ("구름 조금", "⛅"),
+    3: ("흐림", "☁️"),
+    45: ("안개", "🌫️"),
+    48: ("상고대 안개", "🌫️"),
+    51: ("이슬비", "🌦️"),
+    53: ("이슬비", "🌦️"),
+    55: ("강한 이슬비", "🌧️"),
+    56: ("어는 이슬비", "🌧️"),
+    57: ("강한 어는 이슬비", "🌧️"),
+    61: ("약한 비", "🌧️"),
+    63: ("비", "🌧️"),
+    65: ("강한 비", "🌧️"),
+    66: ("어는 비", "🌧️"),
+    67: ("강한 어는 비", "🌧️"),
+    71: ("약한 눈", "🌨️"),
+    73: ("눈", "🌨️"),
+    75: ("강한 눈", "❄️"),
+    77: ("싸락눈", "❄️"),
+    80: ("소나기", "🌦️"),
+    81: ("소나기", "🌦️"),
+    82: ("강한 소나기", "🌧️"),
+    85: ("눈 소나기", "🌨️"),
+    86: ("강한 눈 소나기", "❄️"),
+    95: ("뇌우", "⛈️"),
+    96: ("우박 동반 뇌우", "⛈️"),
+    99: ("강한 우박 동반 뇌우", "⛈️"),
+}
+SNOW_WEATHER_CODES = {71, 73, 75, 77, 85, 86}
+FREEZING_WEATHER_CODES = {56, 57, 66, 67}
+
+
+def weather_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def weather_int(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def clamp_percent(value: Any) -> int:
+    return max(0, min(100, int(round(weather_float(value)))))
+
+
+def weather_condition_meta(code: Any) -> tuple[str, str]:
+    return WEATHER_CODE_META.get(weather_int(code, -1), ("기상 정보", "🌡️"))
+
+
+def parse_weather_time(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def weather_unit(weather: dict[str, Any], section: str, key: str, fallback: str) -> str:
+    units = weather.get(f"{section}_units", {})
+    if isinstance(units, dict):
+        return str(units.get(key, fallback))
+    return fallback
+
+
+@st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
+def fetch_jeju_weather() -> dict[str, Any] | None:
+    params = {
+        "latitude": WEATHER_POINT["lat"],
+        "longitude": WEATHER_POINT["lng"],
+        "timezone": "Asia/Seoul",
+        "forecast_hours": 24,
+        "current": ",".join(
+            [
+                "temperature_2m",
+                "relative_humidity_2m",
+                "apparent_temperature",
+                "precipitation",
+                "snowfall",
+                "weather_code",
+                "cloud_cover",
+                "wind_speed_10m",
+                "wind_gusts_10m",
+            ]
+        ),
+        "hourly": ",".join(
+            [
+                "temperature_2m",
+                "apparent_temperature",
+                "precipitation_probability",
+                "precipitation",
+                "snowfall",
+                "weather_code",
+                "wind_speed_10m",
+            ]
+        ),
+        "wind_speed_unit": "kmh",
+        "precipitation_unit": "mm",
+    }
+    try:
+        response = requests.get(WEATHER_API_URL, params=params, timeout=5)
+        response.raise_for_status()
+        weather = response.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+    if not isinstance(weather, dict) or "current" not in weather or "hourly" not in weather:
+        return None
+    return weather
+
+
+def hourly_weather_value(hourly: dict[str, Any], key: str, index: int, default: Any = None) -> Any:
+    values = hourly.get(key, [])
+    if isinstance(values, list) and 0 <= index < len(values):
+        return values[index]
+    return default
+
+
+def snow_chance_for_hour(
+    precip_probability: Any,
+    snowfall: Any,
+    temperature: Any,
+    weather_code: Any,
+) -> int:
+    precip = clamp_percent(precip_probability)
+    snow_amount = weather_float(snowfall)
+    temp = weather_float(temperature, 10.0)
+    code = weather_int(weather_code, -1)
+
+    if code in SNOW_WEATHER_CODES or snow_amount > 0:
+        if snow_amount >= 0.5:
+            baseline = 82
+        elif snow_amount >= 0.1:
+            baseline = 68
+        else:
+            baseline = 55
+        return max(precip, baseline)
+
+    if code in FREEZING_WEATHER_CODES and temp <= 3:
+        return max(35, min(90, int(round(precip * 0.8))))
+    if temp <= 1 and precip >= 10:
+        return min(90, max(25, int(round(precip * 0.8))))
+    if temp <= 3 and precip >= 20:
+        return min(75, max(18, int(round(precip * 0.55))))
+    if temp <= 4 and precip >= 45:
+        return min(55, max(12, int(round(precip * 0.35))))
+    return 0
+
+
+def snow_class_for_chance(chance: int) -> str:
+    if chance >= 65:
+        return "snow-high"
+    if chance >= 35:
+        return "snow-mid"
+    if chance > 0:
+        return "snow-low"
+    return "snow-calm"
+
+
+def snow_summary_for_row(chance: int, snowfall: float, codes: list[Any]) -> str:
+    if chance >= 65:
+        return "눈 예보 강함" if snowfall > 0 else "눈 가능성 높음"
+    if chance >= 35:
+        return "눈 가능성"
+    if chance > 0:
+        return "낮은 가능성"
+
+    snow_code = next((code for code in codes if weather_int(code, -1) in SNOW_WEATHER_CODES), None)
+    label, _icon = weather_condition_meta(snow_code if snow_code is not None else (codes[0] if codes else None))
+    return label
+
+
+def weather_period_label(start_time: Any, end_time: Any) -> str:
+    start = parse_weather_time(start_time)
+    end = parse_weather_time(end_time)
+    if not start:
+        return escape(str(start_time or ""))
+    if not end:
+        end = start
+    end = end + timedelta(hours=1)
+    prefix = "" if start.date() == datetime.now().date() else start.strftime("%m/%d ")
+    return f"{prefix}{start:%H}~{end:%H}시"
+
+
+def build_snow_forecast_rows(weather: dict[str, Any]) -> list[dict[str, Any]]:
+    hourly = weather.get("hourly", {})
+    if not isinstance(hourly, dict):
+        return []
+
+    times = hourly.get("time", [])
+    if not isinstance(times, list):
+        return []
+
+    rows = []
+    limit = min(24, len(times))
+    for start in range(0, limit, 2):
+        indexes = list(range(start, min(start + 2, limit)))
+        temps = [
+            weather_float(hourly_weather_value(hourly, "temperature_2m", index))
+            for index in indexes
+        ]
+        snowfall_values = [
+            weather_float(hourly_weather_value(hourly, "snowfall", index))
+            for index in indexes
+        ]
+        codes = [hourly_weather_value(hourly, "weather_code", index) for index in indexes]
+        chances = [
+            snow_chance_for_hour(
+                hourly_weather_value(hourly, "precipitation_probability", index),
+                hourly_weather_value(hourly, "snowfall", index),
+                hourly_weather_value(hourly, "temperature_2m", index),
+                hourly_weather_value(hourly, "weather_code", index),
+            )
+            for index in indexes
+        ]
+        chance = max(chances, default=0)
+        snowfall_sum = sum(snowfall_values)
+        rows.append(
+            {
+                "period": weather_period_label(times[start], times[indexes[-1]]),
+                "chance": chance,
+                "class": snow_class_for_chance(chance),
+                "temperature": (
+                    f"{min(temps):.0f}~{max(temps):.0f}°"
+                    if temps and min(temps) != max(temps)
+                    else f"{temps[0]:.0f}°" if temps else "-"
+                ),
+                "snowfall": snowfall_sum,
+                "summary": snow_summary_for_row(chance, snowfall_sum, codes),
+            }
+        )
+    return rows
+
+
+def format_weather_timestamp(value: Any) -> str:
+    observed = parse_weather_time(value)
+    if not observed:
+        return datetime.now().strftime("%H:%M")
+    return observed.strftime("%m/%d %H:%M")
+
+
+def render_weather_panel() -> None:
+    weather = fetch_jeju_weather()
+    if not weather:
+        render_html(
+            """
+            <div class="weather-card">
+                <div class="weather-head">
+                    <div>
+                        <div class="weather-kicker">현재 제주 날씨</div>
+                        <div class="weather-title">날씨 정보 대기 중</div>
+                        <div class="weather-place">네트워크 연결 후 자동 갱신</div>
+                    </div>
+                    <div class="weather-icon">🌡️</div>
+                </div>
+                <div class="empty-note">현재 날씨 정보를 가져오지 못했습니다. 지도와 제보 기능은 계속 사용할 수 있습니다.</div>
+            </div>
+            """
+        )
+        return
+
+    current = weather.get("current", {})
+    if not isinstance(current, dict):
+        current = {}
+    rows = build_snow_forecast_rows(weather)
+    condition_label, condition_icon = weather_condition_meta(current.get("weather_code"))
+    temperature = weather_float(current.get("temperature_2m"))
+    apparent = weather_float(current.get("apparent_temperature"))
+    humidity = weather_int(current.get("relative_humidity_2m"))
+    wind = weather_float(current.get("wind_speed_10m"))
+    gust = weather_float(current.get("wind_gusts_10m"))
+    precipitation = weather_float(current.get("precipitation"))
+    current_snow = weather_float(current.get("snowfall"))
+    peak_snow_chance = max((int(row["chance"]) for row in rows), default=0)
+    expected_snowfall = sum(float(row["snowfall"]) for row in rows)
+    snow_class = snow_class_for_chance(peak_snow_chance)
+    precip_unit = weather_unit(weather, "current", "precipitation", "mm")
+    snow_unit = weather_unit(weather, "hourly", "snowfall", "cm")
+    updated = format_weather_timestamp(current.get("time"))
+
+    row_html = "".join(
+        clean_html(
+            f"""
+            <div class="weather-td">{escape(row['period'])}</div>
+            <div class="weather-td"><span class="snow-chip {row['class']}">{int(row['chance'])}%</span></div>
+            <div class="weather-td">{escape(row['temperature'])}</div>
+            <div class="weather-td">{escape(row['summary'])}</div>
+            """
+        )
+        for row in rows
+    )
+
+    render_html(
+        f"""
+        <div class="weather-card">
+            <div class="weather-head">
+                <div>
+                    <div class="weather-kicker">현재 제주 날씨</div>
+                    <div class="weather-title">{escape(condition_label)} · {temperature:.1f}°</div>
+                    <div class="weather-place">{escape(WEATHER_POINT['name'])} 기준 · {escape(updated)}</div>
+                </div>
+                <div class="weather-icon">{condition_icon}</div>
+            </div>
+            <div class="weather-metrics">
+                <div class="weather-metric"><span>체감</span><strong>{apparent:.1f}°</strong></div>
+                <div class="weather-metric"><span>습도</span><strong>{humidity}%</strong></div>
+                <div class="weather-metric"><span>바람</span><strong>{wind:.0f}km/h · 돌풍 {gust:.0f}</strong></div>
+                <div class="weather-metric"><span>강수/적설</span><strong>{precipitation:.1f}{escape(precip_unit)} · 눈 {current_snow:.1f}{escape(snow_unit)}</strong></div>
+            </div>
+            <div class="weather-summary">
+                <div class="weather-summary-pill {snow_class}">
+                    <span>24시간 최고 눈 가능성</span>
+                    <strong>{peak_snow_chance}%</strong>
+                </div>
+                <div class="weather-summary-pill {snow_class}">
+                    <span>예상 적설 합계</span>
+                    <strong>{expected_snowfall:.1f}{escape(snow_unit)}</strong>
+                </div>
+            </div>
+            <div class="weather-table">
+                <div class="weather-th">시간</div>
+                <div class="weather-th">눈</div>
+                <div class="weather-th">기온</div>
+                <div class="weather-th">예상</div>
+                {row_html}
+            </div>
+            <div class="weather-source">Open-Meteo 예보 · 15분 캐시</div>
+        </div>
+        """
+    )
 
 
 def files_to_photos(files: list[Any] | None) -> list[dict[str, str]]:
@@ -2913,6 +3408,7 @@ def main() -> None:
         render_timeline(reports, docked=True)
 
     with panel_col:
+        render_weather_panel()
         selected = current_report()
         if selected:
             render_report_detail(selected)
