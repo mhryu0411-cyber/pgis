@@ -115,6 +115,103 @@ class PrettyScaleControl(MacroElement):
     )
 
 
+class ResponsiveMapInteraction(MacroElement):
+    _template = Template(
+        """
+        {% macro script(this, kwargs) %}
+        (function () {
+            const map = {{ this._parent.get_name() }};
+            if (!map || map._pgisResponsiveInteraction) {
+                return;
+            }
+
+            const mobileQuery = window.matchMedia("(max-width: 760px)");
+            const handlerNames = [
+                "dragging",
+                "touchZoom",
+                "scrollWheelZoom",
+                "doubleClickZoom",
+                "boxZoom",
+                "keyboard",
+            ];
+            let locked = false;
+            let controlAdded = false;
+            let button = null;
+
+            const control = L.control({ position: "topright" });
+            control.onAdd = function () {
+                const wrap = L.DomUtil.create("div", "pgis-map-lock-control");
+                button = L.DomUtil.create("button", "", wrap);
+                button.type = "button";
+                L.DomEvent.disableClickPropagation(wrap);
+                L.DomEvent.disableScrollPropagation(wrap);
+                L.DomEvent.on(button, "click", function (event) {
+                    L.DomEvent.preventDefault(event);
+                    setLocked(!locked);
+                });
+                updateButton();
+                return wrap;
+            };
+
+            function updateButton() {
+                if (!button) {
+                    return;
+                }
+                button.textContent = locked ? "🔒 지도 이동 잠금" : "✋ 지도 이동 중";
+                button.setAttribute("aria-pressed", locked ? "false" : "true");
+                button.title = locked
+                    ? "누르면 지도를 이동하고 확대할 수 있습니다."
+                    : "누르면 페이지 스크롤이 편한 잠금 상태로 돌아갑니다.";
+            }
+
+            function setLocked(nextLocked) {
+                locked = Boolean(nextLocked);
+                handlerNames.forEach(function (name) {
+                    const handler = map[name];
+                    if (!handler) {
+                        return;
+                    }
+                    if (locked) {
+                        handler.disable();
+                    } else {
+                        handler.enable();
+                    }
+                });
+                map.getContainer().classList.toggle("pgis-map-locked", locked);
+                updateButton();
+            }
+
+            function syncResponsiveMode() {
+                if (mobileQuery.matches) {
+                    if (!controlAdded) {
+                        control.addTo(map);
+                        controlAdded = true;
+                    }
+                    setLocked(true);
+                    return;
+                }
+
+                setLocked(false);
+                if (controlAdded) {
+                    control.remove();
+                    controlAdded = false;
+                    button = null;
+                }
+            }
+
+            if (typeof mobileQuery.addEventListener === "function") {
+                mobileQuery.addEventListener("change", syncResponsiveMode);
+            } else if (typeof mobileQuery.addListener === "function") {
+                mobileQuery.addListener(syncResponsiveMode);
+            }
+            setTimeout(syncResponsiveMode, 0);
+            map._pgisResponsiveInteraction = true;
+        })();
+        {% endmacro %}
+        """
+    )
+
+
 def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int(os.getenv(name, str(default)))
@@ -587,6 +684,38 @@ def css() -> None:
             color: var(--muted);
             font-size: .78rem;
             margin-top: .12rem;
+        }}
+        .mobile-app-hero {{
+            display: none;
+        }}
+        .mobile-app-hero-icon {{
+            width: 3rem;
+            height: 3rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            border-radius: 12px;
+            background:
+                linear-gradient(145deg, rgba(37, 99, 235, .13), rgba(22, 163, 74, .12)),
+                var(--panel);
+            border: 1px solid color-mix(in srgb, #2563eb 24%, var(--border));
+            font-size: 1.65rem;
+            box-shadow: 0 10px 24px var(--shadow);
+        }}
+        .mobile-app-hero-title {{
+            color: var(--text);
+            font-size: 1.42rem;
+            line-height: 1.18;
+            font-weight: 950;
+            letter-spacing: -.02em;
+        }}
+        .mobile-app-hero-sub {{
+            color: var(--muted);
+            font-size: .9rem;
+            line-height: 1.35;
+            margin-top: .36rem;
+            font-weight: 650;
         }}
         .live-pill {{
             display: inline-flex;
@@ -1314,10 +1443,66 @@ def css() -> None:
             line-height: 1;
             box-shadow: none;
         }}
+        .st-key-map_canvas iframe {{
+            display: block;
+            width: 100%;
+        }}
         @media (max-width: 900px) {{
+            .block-container {{
+                padding: .55rem .72rem 1.5rem;
+            }}
+            .mobile-app-hero {{
+                display: flex;
+                align-items: center;
+                gap: .82rem;
+                margin: .2rem 0 .85rem;
+                padding: .95rem .9rem 1rem;
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                background:
+                    radial-gradient(circle at 0 0, rgba(59, 130, 246, .13), transparent 38%),
+                    radial-gradient(circle at 100% 100%, rgba(34, 197, 94, .10), transparent 42%),
+                    var(--panel);
+                box-shadow: 0 14px 36px var(--shadow);
+            }}
+            .st-key-central_report_composer {{
+                padding: .78rem .72rem .72rem;
+                border-radius: 12px;
+                margin-bottom: .7rem;
+            }}
+            .report-composer-intro,
+            .report-composer-location {{
+                padding: .72rem .76rem;
+            }}
+            .report-composer-title {{
+                font-size: 1.08rem;
+            }}
+            .st-key-map_canvas iframe {{
+                height: clamp(360px, 52vh, 440px) !important;
+                min-height: 360px !important;
+                border-radius: 12px;
+                box-shadow: 0 12px 30px var(--shadow);
+            }}
             .photo-grid {{ grid-template-columns: 1fr; }}
             .timeline-dock-grid {{ grid-template-columns: 1fr; }}
             .report-composer-hero {{ grid-template-columns: 1fr; }}
+        }}
+        @media (max-width: 480px) {{
+            .mobile-app-hero-title {{
+                font-size: 1.3rem;
+            }}
+            .mobile-app-hero-sub {{
+                font-size: .82rem;
+            }}
+            .mobile-app-hero-icon {{
+                width: 2.72rem;
+                height: 2.72rem;
+                font-size: 1.45rem;
+            }}
+            .st-key-map_canvas iframe {{
+                height: clamp(340px, 48vh, 400px) !important;
+                min-height: 340px !important;
+            }}
         }}
         </style>
         """
@@ -3269,11 +3454,44 @@ def add_map_chrome(fmap: folium.Map) -> None:
             }
             .pgis-scale-bar i:nth-child(odd) { background: #0f172a; }
             .pgis-scale-bar i:nth-child(even) { background: #f8fafc; }
+            .pgis-map-lock-control {
+                display: none;
+            }
+            .pgis-map-lock-control button {
+                appearance: none;
+                border: 1px solid rgba(148, 163, 184, .55);
+                border-radius: 999px;
+                padding: 8px 11px;
+                color: #0f172a;
+                background: rgba(255, 255, 255, .95);
+                box-shadow: 0 8px 22px rgba(15, 23, 42, .2);
+                font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                font-size: 11px;
+                font-weight: 900;
+                cursor: pointer;
+            }
+            .pgis-map-locked {
+                touch-action: pan-y !important;
+                cursor: default !important;
+            }
+            @media (max-width: 760px) {
+                .pgis-map-lock-control {
+                    display: block;
+                }
+                .leaflet-control-zoom {
+                    margin-top: 52px !important;
+                }
+                .pgis-scale-control {
+                    transform: scale(.88);
+                    transform-origin: bottom left;
+                }
+            }
             </style>
             """
         )
     )
     fmap.add_child(PrettyScaleControl())
+    fmap.add_child(ResponsiveMapInteraction())
 
 
 def build_map(reports: list[dict[str, Any]]) -> folium.Map:
@@ -4004,6 +4222,20 @@ def render_idle_panel(reports: list[dict[str, Any]]) -> None:
     render_cctv_panel(key_suffix="home")
 
 
+def render_mobile_header() -> None:
+    render_html(
+        """
+        <div class="mobile-app-hero">
+            <div class="mobile-app-hero-icon">🗺️</div>
+            <div>
+                <div class="mobile-app-hero-title">제주 겨울도로 PGIS</div>
+                <div class="mobile-app-hero-sub">참여형 도로 통제·위험 제보</div>
+            </div>
+        </div>
+        """
+    )
+
+
 def main() -> None:
     st.set_page_config(
         page_title="제주 겨울도로 PGIS",
@@ -4017,25 +4249,27 @@ def main() -> None:
 
     reports = filtered_reports()
     render_sidebar(reports)
+    render_mobile_header()
 
     main_col, panel_col = st.columns([0.74, 0.26], gap="medium")
 
     with main_col:
         with st.container(key="central_report_composer"):
             render_report_form()
-        fmap = build_map(reports)
-        map_data = st_folium(
-            fmap,
-            height=760,
-            use_container_width=True,
-            returned_objects=[
-                "last_clicked",
-                "last_object_clicked",
-                "last_object_clicked_tooltip",
-                "last_active_drawing",
-            ],
-            key=f"pgis_map_{st.session_state.theme_mode}",
-        )
+        with st.container(key="map_canvas"):
+            fmap = build_map(reports)
+            map_data = st_folium(
+                fmap,
+                height=680,
+                use_container_width=True,
+                returned_objects=[
+                    "last_clicked",
+                    "last_object_clicked",
+                    "last_object_clicked_tooltip",
+                    "last_active_drawing",
+                ],
+                key=f"pgis_map_{st.session_state.theme_mode}",
+            )
         handle_map_event(map_data, reports)
         render_timeline(reports, docked=True)
 
