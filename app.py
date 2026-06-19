@@ -703,6 +703,11 @@ def css() -> None:
         .st-key-mobile_theme_toggle {{
             display: none;
         }}
+        .st-key-timeline_actions_dock,
+        .st-key-timeline_actions_panel,
+        .st-key-detail_actions {{
+            margin-bottom: .55rem;
+        }}
         .mobile-app-hero-icon {{
             width: 3rem;
             height: 3rem;
@@ -1526,25 +1531,35 @@ def css() -> None:
                 right: .7rem;
                 z-index: 3000;
                 margin: 0;
-                width: 3.75rem;
+                width: 4.85rem;
             }}
             .st-key-mobile_theme_toggle div[data-testid="stHorizontalBlock"] {{
-                gap: .18rem;
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: .28rem;
                 padding: 0;
                 background: transparent;
                 border: 0;
                 box-shadow: none;
+                flex-wrap: nowrap !important;
+            }}
+            .st-key-mobile_theme_toggle div[data-testid="stHorizontalBlock"] > div {{
+                min-width: 0 !important;
+                width: auto !important;
+                flex: none !important;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
             }}
             .st-key-mobile_theme_toggle button {{
-                min-height: 1.62rem;
-                height: 1.62rem;
-                width: 1.62rem;
+                min-height: 2rem;
+                height: 2rem;
+                width: 2rem;
                 padding: 0;
                 border-radius: 999px;
                 border: 1px solid var(--border);
                 background: color-mix(in srgb, var(--panel) 76%, transparent);
-                box-shadow: none;
-                font-size: .78rem;
+                box-shadow: 0 8px 18px rgba(15, 23, 42, .16);
+                font-size: .86rem;
             }}
             .block-container {{
                 padding: 2.45rem .72rem 1.5rem;
@@ -1564,54 +1579,57 @@ def css() -> None:
                 box-shadow: 0 14px 36px var(--shadow);
             }}
             .st-key-central_report_composer {{
-                padding: .48rem .48rem .54rem;
+                padding: .42rem .44rem .5rem;
                 border-radius: 12px;
-                margin-bottom: .58rem;
-                box-shadow: 0 10px 26px var(--shadow);
+                margin-bottom: .52rem;
+                box-shadow: 0 8px 22px var(--shadow);
             }}
             .st-key-central_report_composer::before {{
                 width: 4px;
             }}
             .report-composer-hero {{
                 grid-template-columns: 1fr;
-                gap: .42rem;
-                margin-bottom: .46rem;
+                gap: .32rem;
+                margin-bottom: .38rem;
             }}
             .report-composer-intro,
             .report-composer-location {{
-                padding: .78rem .88rem;
+                padding: .56rem .72rem;
                 border-radius: 10px;
             }}
             .report-composer-intro {{
-                min-height: 8.8rem;
+                min-height: 0;
             }}
             .report-composer-location {{
-                min-height: 5.9rem;
+                min-height: 0;
             }}
             .report-composer-kicker {{
-                font-size: .72rem;
-                margin-bottom: .16rem;
+                font-size: .68rem;
+                margin-bottom: .1rem;
             }}
             .report-composer-title {{
-                font-size: 1.18rem;
+                font-size: 1.04rem;
+                line-height: 1.15;
             }}
             .report-composer-copy {{
-                font-size: .82rem;
-                line-height: 1.3;
-                margin-top: .22rem;
+                font-size: .76rem;
+                line-height: 1.25;
+                margin-top: .14rem;
             }}
             .report-location-kicker {{
-                font-size: .72rem;
+                font-size: .68rem;
             }}
             .report-location-name {{
-                font-size: .98rem;
+                font-size: .9rem;
             }}
             .report-location-meta {{
-                font-size: .72rem;
+                font-size: .67rem;
+                line-height: 1.24;
             }}
             .report-location-icon {{
-                width: 2.45rem;
-                height: 2.45rem;
+                width: 2.1rem;
+                height: 2.1rem;
+                font-size: 1rem;
             }}
             .st-key-central_report_composer div[data-testid="stForm"] {{
                 padding: .82rem .86rem .92rem;
@@ -1642,11 +1660,42 @@ def css() -> None:
             .st-key-central_report_composer div[data-testid="stFormSubmitButton"] button {{
                 min-height: 3.15rem;
             }}
+            .st-key-timeline_actions_dock div[data-testid="stHorizontalBlock"],
+            .st-key-timeline_actions_panel div[data-testid="stHorizontalBlock"],
+            .st-key-detail_actions div[data-testid="stHorizontalBlock"] {{
+                display: grid !important;
+                grid-template-columns: minmax(5.6rem, .45fr) minmax(6.2rem, .55fr) !important;
+                gap: .48rem !important;
+                flex-wrap: nowrap !important;
+                align-items: stretch;
+            }}
+            .st-key-timeline_actions_dock div[data-testid="stHorizontalBlock"] > div,
+            .st-key-timeline_actions_panel div[data-testid="stHorizontalBlock"] > div,
+            .st-key-detail_actions div[data-testid="stHorizontalBlock"] > div {{
+                min-width: 0 !important;
+                width: auto !important;
+                flex: none !important;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+            }}
+            .st-key-timeline_actions_dock div[data-testid="stHorizontalBlock"] > div:nth-child(n+3) {{
+                display: none !important;
+            }}
+            .st-key-timeline_actions_dock button,
+            .st-key-timeline_actions_panel button,
+            .st-key-detail_actions button {{
+                min-height: 2.42rem;
+                padding-left: .38rem;
+                padding-right: .38rem;
+                white-space: nowrap;
+                font-size: .82rem;
+            }}
             .st-key-map_canvas iframe {{
                 height: clamp(360px, 52vh, 440px) !important;
                 min-height: 360px !important;
                 border-radius: 12px;
-                box-shadow: 0 12px 30px var(--shadow);
+                border: 1px solid var(--border);
+                box-shadow: none;
             }}
             .photo-grid {{ grid-template-columns: 1fr; }}
             .timeline-dock-grid {{
@@ -2495,8 +2544,8 @@ def db_road_highlight(feature: dict[str, Any]) -> dict[str, Any]:
 def db_road_hitbox_style(feature: dict[str, Any]) -> dict[str, Any]:
     return {
         "color": "#2563eb",
-        "weight": 26,
-        "opacity": 0.01,
+        "weight": 34,
+        "opacity": 0.001,
     }
 
 
@@ -2504,8 +2553,8 @@ def db_road_hitbox_highlight(feature: dict[str, Any]) -> dict[str, Any]:
     props = feature.get("properties", {})
     return {
         "color": str(props.get("status_color") or "#2563eb"),
-        "weight": 9,
-        "opacity": 0.34,
+        "weight": 12,
+        "opacity": 0.18,
     }
 
 
@@ -4133,6 +4182,17 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
                     class_name="pgis-road-tooltip",
                 ),
             ).add_to(fmap)
+            folium.PolyLine(
+                road["coords"],
+                color=line_color,
+                weight=max(22, line_weight + 16),
+                opacity=0.001,
+                tooltip=folium.Tooltip(
+                    tooltip,
+                    sticky=True,
+                    class_name="pgis-road-tooltip",
+                ),
+            ).add_to(fmap)
 
     add_safe_heat_layer(fmap, reports)
     add_report_heat_layers(fmap, reports)
@@ -4344,24 +4404,25 @@ def render_timeline(reports: list[dict[str, Any]], docked: bool = False) -> None
         """
     )
 
-    if docked:
-        add_col, mode_col, _spacer_col = st.columns([0.16, 0.18, 0.66])
-    else:
-        add_col, mode_col = st.columns([0.38, 0.62])
-    with add_col:
-        st.button(
-            "＋ 제보",
-            type="primary",
-            use_container_width=True,
-            on_click=start_report_from_timeline,
-            help="타임라인에서 바로 새 제보를 엽니다.",
-        )
-    with mode_col:
-        st.button(
-            "통제 우선" if not tourist_mode else "시간순",
-            use_container_width=True,
-            on_click=toggle_tourist_mode,
-        )
+    with st.container(key=f"timeline_actions_{'dock' if docked else 'panel'}"):
+        if docked:
+            add_col, mode_col, _spacer_col = st.columns([0.16, 0.18, 0.66])
+        else:
+            add_col, mode_col = st.columns([0.38, 0.62])
+        with add_col:
+            st.button(
+                "＋ 제보",
+                type="primary",
+                use_container_width=True,
+                on_click=start_report_from_timeline,
+                help="타임라인에서 바로 새 제보를 엽니다.",
+            )
+        with mode_col:
+            st.button(
+                "통제 우선" if not tourist_mode else "시간순",
+                use_container_width=True,
+                on_click=toggle_tourist_mode,
+            )
 
     if not panel_reports:
         render_html('<div class="empty-note">선택한 필터에 표시할 제보가 없습니다.</div>')
@@ -4522,11 +4583,12 @@ def render_report_detail(report: dict[str, Any]) -> None:
         None,
     )
 
-    back_col, add_col = st.columns([0.52, 0.48])
-    with back_col:
-        st.button("← 타임라인", use_container_width=True, on_click=close_panel)
-    with add_col:
-        st.button("＋ 제보", use_container_width=True, on_click=start_report_from_timeline)
+    with st.container(key="detail_actions"):
+        back_col, add_col = st.columns([0.52, 0.48])
+        with back_col:
+            st.button("← 타임라인", use_container_width=True, on_click=close_panel)
+        with add_col:
+            st.button("＋ 제보", use_container_width=True, on_click=start_report_from_timeline)
 
     if road_status:
         render_html(
