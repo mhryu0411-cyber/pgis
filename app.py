@@ -163,8 +163,12 @@ class ResponsiveMapInteraction(MacroElement):
                 if (!button) {
                     return;
                 }
-                button.textContent = locked ? "🔒 지도 이동 잠금" : "✋ 지도 이동 중";
+                button.textContent = locked ? "⌖" : "✋";
                 button.setAttribute("aria-pressed", locked ? "false" : "true");
+                button.setAttribute(
+                    "aria-label",
+                    locked ? "지도 이동 켜기" : "지도 이동 잠그기"
+                );
                 button.title = locked
                     ? "누르면 지도를 이동하고 확대할 수 있습니다."
                     : "누르면 페이지 스크롤이 편한 잠금 상태로 돌아갑니다.";
@@ -1504,49 +1508,44 @@ def css() -> None:
         }}
         @media (max-width: 900px) {{
             #MainMenu {{
-                visibility: visible;
-                height: auto;
+                visibility: hidden;
+                height: 0;
             }}
             [data-testid="stToolbar"] {{
-                display: flex !important;
-                visibility: visible !important;
+                display: none !important;
+                visibility: hidden !important;
             }}
             [data-testid="stExpandSidebarButton"] {{
-                display: inline-flex !important;
-                position: fixed !important;
-                top: .58rem !important;
-                right: .68rem !important;
-                z-index: 2000 !important;
-                background: var(--panel) !important;
-                border: 1px solid var(--border) !important;
-                border-radius: 999px !important;
-                box-shadow: 0 8px 24px var(--shadow) !important;
+                display: none !important;
+                visibility: hidden !important;
             }}
             .st-key-mobile_theme_toggle {{
                 display: block;
-                position: sticky;
-                top: .45rem;
-                z-index: 1200;
-                margin: -.1rem 3.35rem .52rem auto;
-                width: 5.85rem;
+                position: fixed;
+                top: .62rem;
+                right: .72rem;
+                z-index: 3000;
+                margin: 0;
+                width: 5.25rem;
             }}
             .st-key-mobile_theme_toggle div[data-testid="stHorizontalBlock"] {{
-                gap: .28rem;
-                padding: .24rem;
+                gap: .22rem;
+                padding: .2rem;
                 border-radius: 999px;
-                background: color-mix(in srgb, var(--panel) 92%, transparent);
+                background: color-mix(in srgb, var(--panel) 96%, transparent);
                 border: 1px solid var(--border);
                 box-shadow: 0 8px 24px var(--shadow);
             }}
             .st-key-mobile_theme_toggle button {{
-                min-height: 2rem;
-                height: 2rem;
-                width: 2rem;
+                min-height: 1.9rem;
+                height: 1.9rem;
+                width: 1.9rem;
                 padding: 0;
                 border-radius: 999px;
+                font-size: .9rem;
             }}
             .block-container {{
-                padding: .55rem .72rem 1.5rem;
+                padding: 3.05rem .72rem 1.5rem;
             }}
             .mobile-app-hero {{
                 display: flex;
@@ -1563,9 +1562,9 @@ def css() -> None:
                 box-shadow: 0 14px 36px var(--shadow);
             }}
             .st-key-central_report_composer {{
-                padding: .38rem .42rem .46rem;
-                border-radius: 10px;
-                margin-bottom: .5rem;
+                padding: .48rem .48rem .54rem;
+                border-radius: 12px;
+                margin-bottom: .58rem;
                 box-shadow: 0 10px 26px var(--shadow);
             }}
             .st-key-central_report_composer::before {{
@@ -1573,30 +1572,29 @@ def css() -> None:
             }}
             .report-composer-hero {{
                 grid-template-columns: 1fr;
-                gap: 0;
-                margin-bottom: 0;
+                gap: .42rem;
+                margin-bottom: .46rem;
             }}
             .report-composer-intro,
             .report-composer-location {{
-                padding: .68rem .78rem;
-                border-radius: 0;
+                padding: .78rem .88rem;
+                border-radius: 10px;
             }}
             .report-composer-intro {{
-                border-radius: 9px 9px 0 0;
-                border-bottom: 0;
+                min-height: 8.8rem;
             }}
             .report-composer-location {{
-                border-radius: 0;
+                min-height: 5.9rem;
             }}
             .report-composer-kicker {{
                 font-size: .72rem;
                 margin-bottom: .16rem;
             }}
             .report-composer-title {{
-                font-size: 1.05rem;
+                font-size: 1.18rem;
             }}
             .report-composer-copy {{
-                font-size: .76rem;
+                font-size: .82rem;
                 line-height: 1.3;
                 margin-top: .22rem;
             }}
@@ -1614,29 +1612,33 @@ def css() -> None:
                 height: 2.45rem;
             }}
             .st-key-central_report_composer div[data-testid="stForm"] {{
-                padding: .7rem .72rem .76rem;
-                border-radius: 0 0 9px 9px;
-                border-top: 0;
+                padding: .82rem .86rem .92rem;
+                border-radius: 10px;
             }}
             .st-key-central_report_composer div[data-testid="stForm"] label p {{
-                font-size: .76rem;
+                font-size: .8rem;
             }}
             .st-key-central_report_composer div[data-testid="stHorizontalBlock"] {{
-                gap: 0;
+                gap: .52rem;
+                flex-wrap: nowrap;
+                align-items: stretch;
             }}
             .st-key-central_report_composer div[data-testid="stHorizontalBlock"] > div {{
-                padding-left: .18rem !important;
-                padding-right: .18rem !important;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+                min-width: 0 !important;
+                flex: 1 1 0 !important;
             }}
             .st-key-central_report_composer textarea {{
-                min-height: 62px !important;
-                height: 62px !important;
+                min-height: 4.15rem !important;
+                height: 4.15rem !important;
             }}
             .st-key-central_report_composer [data-testid="stFileUploaderDropzone"] {{
-                min-height: 2.55rem;
+                min-height: 3.25rem;
+                padding: .32rem .42rem;
             }}
             .st-key-central_report_composer div[data-testid="stFormSubmitButton"] button {{
-                min-height: 2.7rem;
+                min-height: 3.15rem;
             }}
             .st-key-map_canvas iframe {{
                 height: clamp(360px, 52vh, 440px) !important;
@@ -2491,8 +2493,8 @@ def db_road_highlight(feature: dict[str, Any]) -> dict[str, Any]:
 def db_road_hitbox_style(feature: dict[str, Any]) -> dict[str, Any]:
     return {
         "color": "#0f172a",
-        "weight": 18,
-        "opacity": 0.01,
+        "weight": 22,
+        "opacity": 0.001,
     }
 
 
@@ -2500,8 +2502,8 @@ def db_road_hitbox_highlight(feature: dict[str, Any]) -> dict[str, Any]:
     props = feature.get("properties", {})
     return {
         "color": str(props.get("status_color") or "#2563eb"),
-        "weight": 7,
-        "opacity": 0.12,
+        "weight": 8,
+        "opacity": 0.28,
     }
 
 
@@ -3618,6 +3620,7 @@ def enrich_road_geojson(
             props["area"] = road_area_label(status["name"])
             props["status"] = status["status"]
             props["status_color"] = status["color"]
+            props["hover_label"] = f"{props.get('name', status['name'])} · {status['status']}"
             props["report_summary"] = f"제보 {count}건" if count else "-"
             props["terrain_summary"] = (
                 f"DEM {terrain_score:.0f}점"
@@ -3628,6 +3631,7 @@ def enrich_road_geojson(
             props["area"] = "도로망"
             props["status"] = "도로 선택"
             props["status_color"] = ""
+            props["hover_label"] = str(props.get("name", "도로"))
             props["report_summary"] = "-"
             props["terrain_summary"] = "-"
     return enriched
@@ -3996,16 +4000,32 @@ def add_map_chrome(fmap: folium.Map) -> None:
                 font-weight: 900;
                 pointer-events: none;
             }
+            .leaflet-tooltip.pgis-road-tooltip {
+                padding: 7px 10px;
+                border-radius: 8px;
+                border: 1px solid rgba(15, 23, 42, .18);
+                background: rgba(15, 23, 42, .92);
+                color: #fff;
+                box-shadow: 0 10px 24px rgba(15, 23, 42, .22);
+                font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                font-size: 12px;
+                font-weight: 900;
+            }
+            .leaflet-tooltip.pgis-road-tooltip::before {
+                display: none;
+            }
             .pgis-map-lock-control button {
                 appearance: none;
                 border: 1px solid rgba(148, 163, 184, .55);
                 border-radius: 999px;
-                padding: 8px 11px;
+                width: 38px;
+                height: 38px;
+                padding: 0;
                 color: #0f172a;
                 background: rgba(255, 255, 255, .95);
                 box-shadow: 0 8px 22px rgba(15, 23, 42, .2);
                 font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                font-size: 11px;
+                font-size: 17px;
                 font-weight: 900;
                 cursor: pointer;
             }
@@ -4059,10 +4079,12 @@ def add_road_hover_layer(fmap: folium.Map, geojson: dict[str, Any]) -> None:
         style_function=db_road_hitbox_style,
         highlight_function=db_road_hitbox_highlight,
         tooltip=folium.GeoJsonTooltip(
-            fields=["name", "status"],
-            aliases=["도로명", "상태"],
+            fields=["hover_label"],
+            aliases=[""],
             sticky=True,
             localize=True,
+            labels=False,
+            class_name="pgis-road-tooltip",
         ),
         control=False,
         show=True,
@@ -4097,10 +4119,12 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
             style_function=db_road_style,
             highlight_function=db_road_highlight,
             tooltip=folium.GeoJsonTooltip(
-                fields=["name", "area", "status", "report_summary", "terrain_summary"],
-                aliases=["도로명", "구분", "상태", "제보", "지형"],
+                fields=["hover_label"],
+                aliases=[""],
                 sticky=True,
                 localize=True,
+                labels=False,
+                class_name="pgis-road-tooltip",
             ),
         ).add_to(fmap)
     elif db_road_error:
@@ -4124,7 +4148,11 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
                 color=line_color,
                 weight=line_weight,
                 opacity=line_opacity,
-                tooltip=tooltip,
+                tooltip=folium.Tooltip(
+                    tooltip,
+                    sticky=True,
+                    class_name="pgis-road-tooltip",
+                ),
             ).add_to(fmap)
 
     add_safe_heat_layer(fmap, reports)
@@ -4723,53 +4751,51 @@ def render_report_form() -> None:
     vehicle_ids = [item["id"] for item in VEHICLE_TYPES]
 
     with st.form(f"new_report_form_{nonce}_{location_signature}"):
-        quick_col, detail_col = st.columns([0.42, 0.58], gap="large")
-        with quick_col:
-            type_col, snow_col = st.columns(2, gap="medium")
-            with type_col:
-                report_type = st.selectbox(
-                    "위험 유형",
-                    options=type_ids,
-                    format_func=lambda key: f"{TYPE_BY_ID[key]['icon']} {TYPE_BY_ID[key]['label']}",
-                    key=f"report_type_{nonce}_{location_signature}",
-                )
-            with snow_col:
-                snow = st.selectbox(
-                    "적설",
-                    options=["선택 안 함", *SNOW_DEPTH],
-                    key=f"report_snow_{nonce}_{location_signature}",
-                )
+        type_col, snow_col = st.columns(2, gap="medium")
+        with type_col:
+            report_type = st.selectbox(
+                "위험 유형",
+                options=type_ids,
+                format_func=lambda key: f"{TYPE_BY_ID[key]['icon']} {TYPE_BY_ID[key]['label']}",
+                key=f"report_type_{nonce}_{location_signature}",
+            )
+        with snow_col:
+            snow = st.selectbox(
+                "적설",
+                options=["선택 안 함", *SNOW_DEPTH],
+                key=f"report_snow_{nonce}_{location_signature}",
+            )
 
-            vehicle_col, photo_col = st.columns(2, gap="medium")
-            with vehicle_col:
-                vehicle = st.selectbox(
-                    "차량 정보",
-                    options=vehicle_ids,
-                    format_func=lambda key: f"{VEHICLE_BY_ID[key]['icon']} {VEHICLE_BY_ID[key]['label']}",
-                    key=f"report_vehicle_{nonce}_{location_signature}",
-                )
-            with photo_col:
-                photos = st.file_uploader(
-                    "현장 사진",
-                    type=["png", "jpg", "jpeg", "webp"],
-                    accept_multiple_files=True,
-                    key=f"report_photos_{nonce}_{location_signature}",
-                )
-        with detail_col:
-            comment = st.text_area(
-                "상세 내용",
-                max_chars=180,
-                placeholder="예: 통제 안내판 있음, 체인 차량만 통과 중",
-                height=68,
-                key=f"report_comment_{nonce}_{location_signature}",
+        vehicle_col, photo_col = st.columns(2, gap="medium")
+        with vehicle_col:
+            vehicle = st.selectbox(
+                "차량 정보",
+                options=vehicle_ids,
+                format_func=lambda key: f"{VEHICLE_BY_ID[key]['icon']} {VEHICLE_BY_ID[key]['label']}",
+                key=f"report_vehicle_{nonce}_{location_signature}",
             )
-            submitted = st.form_submit_button(
-                "위험 제보 등록",
-                type="primary",
-                use_container_width=True,
-                disabled=not has_selected_road,
-                help="지도에서 도로 또는 지점을 먼저 클릭해 주세요." if not has_selected_road else None,
+        with photo_col:
+            photos = st.file_uploader(
+                "현장 사진",
+                type=["png", "jpg", "jpeg", "webp"],
+                accept_multiple_files=True,
+                key=f"report_photos_{nonce}_{location_signature}",
             )
+
+        comment = st.text_area(
+            "상세 내용",
+            max_chars=180,
+            placeholder="예: 통제 안내판 있음, 체인 차량만 통과 중",
+            height=68,
+            key=f"report_comment_{nonce}_{location_signature}",
+        )
+        submitted = st.form_submit_button(
+            "위험 제보 등록",
+            type="primary",
+            use_container_width=True,
+            disabled=not has_selected_road,
+            help="지도에서 도로 또는 지점을 먼저 클릭해 주세요." if not has_selected_road else None,
+        )
         if submitted:
             submit_report(
                 lat,
