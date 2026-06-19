@@ -612,7 +612,7 @@ def clean_html(value: str) -> str:
 
 
 def render_html(value: str) -> None:
-    st.markdown(clean_html(value), unsafe_allow_html=True)
+    st.html(clean_html(value))
 
 
 def css() -> None:
@@ -1522,30 +1522,32 @@ def css() -> None:
             .st-key-mobile_theme_toggle {{
                 display: block;
                 position: fixed;
-                top: .62rem;
-                right: .72rem;
+                top: .7rem;
+                right: .7rem;
                 z-index: 3000;
                 margin: 0;
-                width: 5.25rem;
+                width: 3.75rem;
             }}
             .st-key-mobile_theme_toggle div[data-testid="stHorizontalBlock"] {{
-                gap: .22rem;
-                padding: .2rem;
-                border-radius: 999px;
-                background: color-mix(in srgb, var(--panel) 96%, transparent);
-                border: 1px solid var(--border);
-                box-shadow: 0 8px 24px var(--shadow);
+                gap: .18rem;
+                padding: 0;
+                background: transparent;
+                border: 0;
+                box-shadow: none;
             }}
             .st-key-mobile_theme_toggle button {{
-                min-height: 1.9rem;
-                height: 1.9rem;
-                width: 1.9rem;
+                min-height: 1.62rem;
+                height: 1.62rem;
+                width: 1.62rem;
                 padding: 0;
                 border-radius: 999px;
-                font-size: .9rem;
+                border: 1px solid var(--border);
+                background: color-mix(in srgb, var(--panel) 76%, transparent);
+                box-shadow: none;
+                font-size: .78rem;
             }}
             .block-container {{
-                padding: 3.05rem .72rem 1.5rem;
+                padding: 2.45rem .72rem 1.5rem;
             }}
             .mobile-app-hero {{
                 display: flex;
@@ -2492,9 +2494,9 @@ def db_road_highlight(feature: dict[str, Any]) -> dict[str, Any]:
 
 def db_road_hitbox_style(feature: dict[str, Any]) -> dict[str, Any]:
     return {
-        "color": "#0f172a",
-        "weight": 22,
-        "opacity": 0.001,
+        "color": "#2563eb",
+        "weight": 26,
+        "opacity": 0.01,
     }
 
 
@@ -2502,8 +2504,8 @@ def db_road_hitbox_highlight(feature: dict[str, Any]) -> dict[str, Any]:
     props = feature.get("properties", {})
     return {
         "color": str(props.get("status_color") or "#2563eb"),
-        "weight": 8,
-        "opacity": 0.28,
+        "weight": 9,
+        "opacity": 0.34,
     }
 
 
@@ -3984,22 +3986,6 @@ def add_map_chrome(fmap: folium.Map) -> None:
             .pgis-map-lock-control {
                 display: none;
             }
-            .pgis-hover-guide {
-                position: absolute;
-                left: 56px;
-                top: 10px;
-                z-index: 500;
-                padding: 7px 10px;
-                border-radius: 999px;
-                color: #0f172a;
-                background: rgba(255, 255, 255, .94);
-                border: 1px solid rgba(148, 163, 184, .45);
-                box-shadow: 0 8px 22px rgba(15, 23, 42, .16);
-                font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                font-size: 11px;
-                font-weight: 900;
-                pointer-events: none;
-            }
             .leaflet-tooltip.pgis-road-tooltip {
                 padding: 7px 10px;
                 border-radius: 8px;
@@ -4044,15 +4030,8 @@ def add_map_chrome(fmap: folium.Map) -> None:
                     transform: scale(.88);
                     transform-origin: bottom left;
                 }
-                .pgis-hover-guide {
-                    left: 10px;
-                    top: 52px;
-                    max-width: calc(100% - 20px);
-                    white-space: normal;
-                }
             }
             </style>
-            <div class="pgis-hover-guide">도로 위에 마우스를 올리면 도로명이 표시됩니다.</div>
             """
         )
     )
