@@ -222,6 +222,92 @@ class ResponsiveMapInteraction(MacroElement):
     )
 
 
+class RoadHoverLabel(MacroElement):
+    _template = Template(
+        """
+        {% macro script(this, kwargs) %}
+        (function () {
+            const map = {{ this._parent.get_name() }};
+            const roads = {{ this.roads_json|safe }};
+            if (!map || map._pgisRoadHoverLabel || !Array.isArray(roads) || !roads.length) {
+                return;
+            }
+
+            const label = L.DomUtil.create("div", "pgis-road-hover-label", map.getContainer());
+            L.DomEvent.disableClickPropagation(label);
+            L.DomEvent.disableScrollPropagation(label);
+            let frame = null;
+            let lastEvent = null;
+
+            function segmentDistance(point, start, end) {
+                const dx = end.x - start.x;
+                const dy = end.y - start.y;
+                if (dx === 0 && dy === 0) {
+                    return point.distanceTo(start);
+                }
+                const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)));
+                return point.distanceTo(L.point(start.x + t * dx, start.y + t * dy));
+            }
+
+            function nearestRoad(event) {
+                const point = map.latLngToLayerPoint(event.latlng);
+                let best = null;
+                let bestDistance = Infinity;
+                roads.forEach(function (road) {
+                    (road.paths || []).forEach(function (path) {
+                        for (let index = 0; index < path.length - 1; index += 1) {
+                            const start = map.latLngToLayerPoint(L.latLng(path[index][0], path[index][1]));
+                            const end = map.latLngToLayerPoint(L.latLng(path[index + 1][0], path[index + 1][1]));
+                            const distance = segmentDistance(point, start, end);
+                            if (distance < bestDistance) {
+                                bestDistance = distance;
+                                best = road;
+                            }
+                        }
+                    });
+                });
+                return best && bestDistance <= 22 ? best : null;
+            }
+
+            function hideLabel() {
+                label.classList.remove("is-visible");
+            }
+
+            function updateLabel() {
+                frame = null;
+                if (!lastEvent) {
+                    hideLabel();
+                    return;
+                }
+                const road = nearestRoad(lastEvent);
+                if (!road) {
+                    hideLabel();
+                    return;
+                }
+                label.textContent = road.label;
+                label.style.transform = `translate(${lastEvent.containerPoint.x + 14}px, ${lastEvent.containerPoint.y + 14}px)`;
+                label.classList.add("is-visible");
+            }
+
+            map.on("mousemove", function (event) {
+                lastEvent = event;
+                if (!frame) {
+                    frame = window.requestAnimationFrame(updateLabel);
+                }
+            });
+            map.on("mouseout zoomstart dragstart", hideLabel);
+            map._pgisRoadHoverLabel = true;
+        })();
+        {% endmacro %}
+        """
+    )
+
+    def __init__(self, roads: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self._name = "RoadHoverLabel"
+        self.roads_json = json.dumps(roads, ensure_ascii=False)
+
+
 def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int(os.getenv(name, str(default)))
@@ -701,6 +787,9 @@ def css() -> None:
             display: none;
         }}
         .st-key-mobile_theme_toggle {{
+            display: none;
+        }}
+        .st-key-mobile_info_panel {{
             display: none;
         }}
         .st-key-timeline_actions_dock,
@@ -1520,6 +1609,9 @@ def css() -> None:
                 display: none !important;
                 visibility: hidden !important;
             }}
+            [data-testid="stHeader"] {{
+                pointer-events: none !important;
+            }}
             [data-testid="stExpandSidebarButton"] {{
                 display: none !important;
                 visibility: hidden !important;
@@ -1529,14 +1621,24 @@ def css() -> None:
                 position: fixed;
                 top: .7rem;
                 right: .7rem;
-                z-index: 3000;
+                z-index: 100000;
                 margin: 0;
-                width: 4.85rem;
+                width: 5.7rem;
+                padding: .18rem;
+                border: 1px solid var(--border);
+                border-radius: 999px;
+                background: color-mix(in srgb, var(--panel) 90%, transparent);
+                box-shadow: 0 8px 18px rgba(15, 23, 42, .16);
+                pointer-events: auto !important;
+                transform: translateZ(0);
+            }}
+            .st-key-mobile_theme_toggle * {{
+                pointer-events: auto !important;
             }}
             .st-key-mobile_theme_toggle div[data-testid="stHorizontalBlock"] {{
                 display: grid !important;
                 grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-                gap: .28rem;
+                gap: .24rem;
                 padding: 0;
                 background: transparent;
                 border: 0;
@@ -1551,15 +1653,16 @@ def css() -> None:
                 padding-right: 0 !important;
             }}
             .st-key-mobile_theme_toggle button {{
-                min-height: 2rem;
-                height: 2rem;
-                width: 2rem;
+                min-height: 2.25rem;
+                height: 2.25rem;
+                width: 2.25rem;
                 padding: 0;
                 border-radius: 999px;
                 border: 1px solid var(--border);
                 background: color-mix(in srgb, var(--panel) 76%, transparent);
-                box-shadow: 0 8px 18px rgba(15, 23, 42, .16);
-                font-size: .86rem;
+                box-shadow: none;
+                font-size: .92rem;
+                cursor: pointer;
             }}
             .block-container {{
                 padding: 2.45rem .72rem 1.5rem;
@@ -1577,6 +1680,68 @@ def css() -> None:
                     radial-gradient(circle at 100% 100%, rgba(34, 197, 94, .10), transparent 42%),
                     var(--panel);
                 box-shadow: 0 14px 36px var(--shadow);
+            }}
+            .st-key-mobile_info_panel {{
+                display: block;
+                margin: .35rem 0 .7rem;
+            }}
+            .st-key-mobile_info_panel div[data-testid="stRadio"] {{
+                margin-bottom: .52rem;
+            }}
+            .st-key-mobile_info_panel div[role="radiogroup"] {{
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: .5rem;
+            }}
+            .st-key-mobile_info_panel div[role="radiogroup"] label {{
+                min-width: 0;
+                min-height: 3.45rem;
+                margin: 0;
+                padding: 0 .35rem;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: color-mix(in srgb, var(--panel) 78%, var(--panel-alt));
+                box-shadow: none;
+                font-size: clamp(.82rem, 3.7vw, 1rem);
+                font-weight: 850;
+                color: var(--text);
+                text-align: center;
+                white-space: nowrap;
+            }}
+            .st-key-mobile_info_panel div[role="radiogroup"] label:has(input:checked) {{
+                background: color-mix(in srgb, #2563eb 13%, var(--panel));
+                border-color: color-mix(in srgb, #2563eb 44%, var(--border));
+                color: var(--text);
+            }}
+            .st-key-mobile_info_panel div[role="radiogroup"] label > div:first-child {{
+                display: none;
+            }}
+            .st-key-mobile_info_panel div[role="radiogroup"] label p {{
+                font-size: inherit;
+                line-height: 1.1;
+                font-weight: inherit;
+                color: inherit;
+                margin: 0;
+            }}
+            .st-key-mobile_info_content {{
+                padding: .68rem;
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                background: var(--panel);
+            }}
+            .st-key-mobile_info_content .control-board,
+            .st-key-mobile_info_content .weather-card {{
+                margin-bottom: 0;
+                box-shadow: none;
+            }}
+            .st-key-mobile_info_content .section-label {{
+                margin-top: 0;
+            }}
+            .st-key-desktop_side_panel {{
+                display: none;
             }}
             .st-key-central_report_composer {{
                 padding: .42rem .44rem .5rem;
@@ -1793,6 +1958,7 @@ def init_state() -> None:
     defaults = {
         "active_filters": [item["id"] for item in REPORT_TYPES],
         "theme_mode": "light",
+        "mobile_info_tab": "현재 통제상황",
         "tourist_mode": False,
         "selected_report_id": None,
         "reporting_location": None,
@@ -3688,6 +3854,42 @@ def enrich_road_geojson(
     return enriched
 
 
+def road_hover_payload(
+    statuses: list[dict[str, Any]],
+    geojson: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    if geojson and geojson.get("features"):
+        for feature in geojson.get("features", []):
+            props = feature.get("properties", {})
+            paths = [
+                [[float(point[1]), float(point[0])] for point in part]
+                for part in geojson_line_parts(feature.get("geometry"))
+                if len(part) >= 2
+            ]
+            if paths:
+                payload.append(
+                    {
+                        "label": str(props.get("hover_label") or props.get("name") or "도로"),
+                        "paths": paths,
+                    }
+                )
+        return payload
+
+    for road in statuses:
+        coords = road.get("coords") or []
+        if len(coords) >= 2:
+            payload.append(
+                {
+                    "label": f"{road['name']} · {road['status']}",
+                    "paths": [
+                        [[float(point[0]), float(point[1])] for point in coords]
+                    ],
+                }
+            )
+    return payload
+
+
 def geojson_line_parts(geometry: dict[str, Any] | None) -> list[list[list[float]]]:
     if not geometry:
         return []
@@ -4049,6 +4251,29 @@ def add_map_chrome(fmap: folium.Map) -> None:
             .leaflet-tooltip.pgis-road-tooltip::before {
                 display: none;
             }
+            .pgis-road-hover-label {
+                position: absolute;
+                left: 0;
+                top: 0;
+                z-index: 950;
+                pointer-events: none;
+                opacity: 0;
+                max-width: min(280px, calc(100% - 32px));
+                padding: 7px 10px;
+                border-radius: 8px;
+                border: 1px solid rgba(15, 23, 42, .18);
+                background: rgba(15, 23, 42, .92);
+                color: #fff;
+                box-shadow: 0 10px 24px rgba(15, 23, 42, .22);
+                font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                font-size: 12px;
+                font-weight: 900;
+                white-space: nowrap;
+                transition: opacity .08s ease;
+            }
+            .pgis-road-hover-label.is-visible {
+                opacity: 1;
+            }
             .pgis-map-lock-control button {
                 appearance: none;
                 border: 1px solid rgba(148, 163, 184, .55);
@@ -4198,6 +4423,9 @@ def build_map(reports: list[dict[str, Any]]) -> folium.Map:
     add_report_heat_layers(fmap, reports)
     if styled_db_roads:
         add_road_hover_layer(fmap, styled_db_roads)
+    hover_roads = road_hover_payload(statuses, styled_db_roads)
+    if hover_roads:
+        fmap.add_child(RoadHoverLabel(hover_roads))
 
     for report in reports:
         type_info = TYPE_BY_ID[report["type"]]
@@ -4856,6 +5084,24 @@ def render_idle_panel(reports: list[dict[str, Any]]) -> None:
     render_cctv_panel(key_suffix="home")
 
 
+def render_mobile_info_panel(reports: list[dict[str, Any]]) -> None:
+    with st.container(key="mobile_info_panel"):
+        selected = st.radio(
+            "모바일 정보",
+            options=["현재 통제상황", "날씨", "CCTV"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="mobile_info_tab",
+        )
+        with st.container(key="mobile_info_content"):
+            if selected == "현재 통제상황":
+                render_control_board(st.session_state.reports, compact=True)
+            elif selected == "날씨":
+                render_weather_panel()
+            else:
+                render_cctv_panel(key_suffix="mobile_home")
+
+
 def render_mobile_header() -> None:
     render_html(
         """
@@ -4908,6 +5154,7 @@ def main() -> None:
     render_sidebar(reports)
     render_mobile_theme_toggle()
     render_mobile_header()
+    render_mobile_info_panel(reports)
 
     main_col, panel_col = st.columns([0.74, 0.26], gap="medium")
 
@@ -4937,8 +5184,9 @@ def main() -> None:
             render_report_detail(selected)
             render_weather_panel()
         else:
-            render_weather_panel()
-            render_idle_panel(reports)
+            with st.container(key="desktop_side_panel"):
+                render_weather_panel()
+                render_idle_panel(reports)
 
 
 if __name__ == "__main__":
