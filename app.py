@@ -27,10 +27,14 @@ JEJU_CENTER = {"lat": 33.3798, "lng": 126.5453}
 KMA_ASOS_API_URL = (
     "https://apis.data.go.kr/1360000/AsosHourlyInfoService/getWthrDataList"
 )
+KMA_VILAGE_FORECAST_API_URL = (
+    "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
+)
 KMA_ASOS_STATION_ID = os.getenv("KMA_ASOS_STATION_ID", "184")
 KMA_ASOS_STATION_NAME = os.getenv("KMA_ASOS_STATION_NAME", "제주")
 WEATHER_REFRESH_SECONDS = 15 * 60
 WEATHER_WINDOW_HOURS = 6
+WEATHER_FORECAST_HOURS = 8
 WEATHER_FALLBACK_DAY_COUNT = 3
 OTHER_ROAD_NAME = "기타도로"
 APP_DIR = Path(__file__).resolve().parent
@@ -225,6 +229,8 @@ def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 ROAD_DB_LIMIT = env_int("PGIS_ROAD_LIMIT", 2500, 1, 20000)
 ROAD_DB_SOURCE_SRID = env_int("PGIS_ROAD_SOURCE_SRID", 5179, 1, 999999)
 REPORT_DB_LIMIT = env_int("PGIS_REPORT_LIMIT", 500, 1, 5000)
+KMA_FORECAST_NX = env_int("KMA_FORECAST_NX", 53, 1, 149)
+KMA_FORECAST_NY = env_int("KMA_FORECAST_NY", 38, 1, 253)
 
 REPORT_TYPES = [
     {
@@ -690,6 +696,9 @@ def css() -> None:
         .mobile-app-hero {{
             display: none;
         }}
+        .st-key-mobile_theme_toggle {{
+            display: none;
+        }}
         .mobile-app-hero-icon {{
             width: 3rem;
             height: 3rem;
@@ -917,6 +926,10 @@ def css() -> None:
             border: 1px solid var(--border);
             border-radius: 8px;
             overflow: hidden;
+        }}
+        .forecast-table {{
+            grid-template-columns: minmax(4.1rem, 1fr) minmax(3.2rem, .7fr) minmax(3.8rem, .75fr) minmax(3.8rem, .75fr);
+            margin-top: .52rem;
         }}
         .weather-th,
         .weather-td {{
@@ -1490,8 +1503,47 @@ def css() -> None:
             z-index: 1;
         }}
         @media (max-width: 900px) {{
+            #MainMenu {{
+                visibility: visible;
+                height: auto;
+            }}
+            [data-testid="stToolbar"] {{
+                display: flex !important;
+                visibility: visible !important;
+            }}
             [data-testid="stExpandSidebarButton"] {{
-                display: none !important;
+                display: inline-flex !important;
+                position: fixed !important;
+                top: .58rem !important;
+                right: .68rem !important;
+                z-index: 2000 !important;
+                background: var(--panel) !important;
+                border: 1px solid var(--border) !important;
+                border-radius: 999px !important;
+                box-shadow: 0 8px 24px var(--shadow) !important;
+            }}
+            .st-key-mobile_theme_toggle {{
+                display: block;
+                position: sticky;
+                top: .45rem;
+                z-index: 1200;
+                margin: -.1rem 3.35rem .52rem auto;
+                width: 5.85rem;
+            }}
+            .st-key-mobile_theme_toggle div[data-testid="stHorizontalBlock"] {{
+                gap: .28rem;
+                padding: .24rem;
+                border-radius: 999px;
+                background: color-mix(in srgb, var(--panel) 92%, transparent);
+                border: 1px solid var(--border);
+                box-shadow: 0 8px 24px var(--shadow);
+            }}
+            .st-key-mobile_theme_toggle button {{
+                min-height: 2rem;
+                height: 2rem;
+                width: 2rem;
+                padding: 0;
+                border-radius: 999px;
             }}
             .block-container {{
                 padding: .55rem .72rem 1.5rem;
@@ -1511,22 +1563,30 @@ def css() -> None:
                 box-shadow: 0 14px 36px var(--shadow);
             }}
             .st-key-central_report_composer {{
-                padding: .48rem .5rem .58rem;
+                padding: .38rem .42rem .46rem;
                 border-radius: 10px;
                 margin-bottom: .5rem;
+                box-shadow: 0 10px 26px var(--shadow);
             }}
             .st-key-central_report_composer::before {{
                 width: 4px;
             }}
             .report-composer-hero {{
                 grid-template-columns: 1fr;
-                gap: .22rem;
-                margin-bottom: .42rem;
+                gap: 0;
+                margin-bottom: 0;
             }}
             .report-composer-intro,
             .report-composer-location {{
                 padding: .68rem .78rem;
-                border-radius: 10px;
+                border-radius: 0;
+            }}
+            .report-composer-intro {{
+                border-radius: 9px 9px 0 0;
+                border-bottom: 0;
+            }}
+            .report-composer-location {{
+                border-radius: 0;
             }}
             .report-composer-kicker {{
                 font-size: .72rem;
@@ -1555,9 +1615,18 @@ def css() -> None:
             }}
             .st-key-central_report_composer div[data-testid="stForm"] {{
                 padding: .7rem .72rem .76rem;
+                border-radius: 0 0 9px 9px;
+                border-top: 0;
             }}
             .st-key-central_report_composer div[data-testid="stForm"] label p {{
                 font-size: .76rem;
+            }}
+            .st-key-central_report_composer div[data-testid="stHorizontalBlock"] {{
+                gap: 0;
+            }}
+            .st-key-central_report_composer div[data-testid="stHorizontalBlock"] > div {{
+                padding-left: .18rem !important;
+                padding-right: .18rem !important;
             }}
             .st-key-central_report_composer textarea {{
                 min-height: 62px !important;
@@ -1576,7 +1645,69 @@ def css() -> None:
                 box-shadow: 0 12px 30px var(--shadow);
             }}
             .photo-grid {{ grid-template-columns: 1fr; }}
-            .timeline-dock-grid {{ grid-template-columns: 1fr; }}
+            .timeline-dock-grid {{
+                position: relative;
+                grid-template-columns: 1fr;
+                gap: 0;
+                padding-left: .8rem;
+            }}
+            .timeline-dock-grid::before {{
+                content: "";
+                position: absolute;
+                left: .2rem;
+                top: .35rem;
+                bottom: .35rem;
+                width: 2px;
+                background: var(--border);
+            }}
+            .timeline-dock .timeline-card {{
+                position: relative;
+                min-height: 0;
+                margin-bottom: .48rem;
+                border-left-width: 5px;
+            }}
+            .timeline-dock .timeline-card::before {{
+                content: "";
+                position: absolute;
+                left: -.98rem;
+                top: .9rem;
+                width: .52rem;
+                height: .52rem;
+                border-radius: 50%;
+                background: var(--accent);
+                box-shadow: 0 0 0 3px var(--panel);
+            }}
+            .detail-card {{
+                padding: .78rem;
+                border-left-width: 0;
+                border-top: 5px solid var(--accent);
+                box-shadow: 0 10px 26px var(--shadow);
+            }}
+            .detail-head {{
+                align-items: center;
+            }}
+            .detail-comment {{
+                margin: .58rem 0;
+                font-size: .86rem;
+            }}
+            .mini-row {{
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: .36rem;
+            }}
+            .mini-row span {{
+                justify-content: center;
+                min-width: 0;
+                overflow-wrap: anywhere;
+                border-radius: 8px;
+            }}
+            .control-primary {{
+                grid-template-columns: 1fr;
+                gap: .55rem;
+            }}
+            .status-badge {{
+                width: 100%;
+            }}
         }}
         @media (max-width: 480px) {{
             .mobile-app-hero-title {{
@@ -2369,8 +2500,8 @@ def db_road_hitbox_highlight(feature: dict[str, Any]) -> dict[str, Any]:
     props = feature.get("properties", {})
     return {
         "color": str(props.get("status_color") or "#2563eb"),
-        "weight": 9,
-        "opacity": 0.34,
+        "weight": 7,
+        "opacity": 0.12,
     }
 
 
@@ -2777,6 +2908,143 @@ def fetch_jeju_asos_hourly(service_key: str) -> dict[str, Any]:
     }
 
 
+def forecast_base_datetime(now_kst: datetime) -> datetime:
+    available_hours = [2, 5, 8, 11, 14, 17, 20, 23]
+    reference = now_kst.replace(minute=0, second=0, microsecond=0) - timedelta(minutes=75)
+    for hour in reversed(available_hours):
+        if reference.hour >= hour:
+            return reference.replace(hour=hour)
+    previous = reference - timedelta(days=1)
+    return previous.replace(hour=23)
+
+
+def vilage_forecast_params(service_key: str, base: datetime) -> dict[str, Any]:
+    return {
+        "serviceKey": service_key,
+        "pageNo": 1,
+        "numOfRows": 300,
+        "dataType": "JSON",
+        "base_date": base.strftime("%Y%m%d"),
+        "base_time": base.strftime("%H00"),
+        "nx": KMA_FORECAST_NX,
+        "ny": KMA_FORECAST_NY,
+    }
+
+
+def parse_vilage_forecast_response(response: requests.Response) -> dict[str, Any]:
+    if response.status_code != 200:
+        return {
+            "ok": False,
+            "error_code": f"HTTP_{response.status_code}",
+            "error_message": str(response.reason or "HTTP 오류"),
+        }
+    try:
+        payload = response.json()
+    except ValueError:
+        return {
+            "ok": False,
+            "error_code": "INVALID_RESPONSE",
+            "error_message": "단기예보 API 응답 형식을 읽지 못했습니다.",
+        }
+
+    api_response = payload.get("response", {}) if isinstance(payload, dict) else {}
+    header = api_response.get("header", {}) if isinstance(api_response, dict) else {}
+    result_code = str(header.get("resultCode", "")).strip()
+    result_message = str(header.get("resultMsg", "")).strip()
+    if result_code not in {"0", "00"}:
+        return {
+            "ok": False,
+            "error_code": result_code or "INVALID_RESPONSE",
+            "error_message": result_message or "기상청 단기예보 요청이 거부되었습니다.",
+        }
+
+    body = api_response.get("body", {})
+    items_container = body.get("items", {}) if isinstance(body, dict) else {}
+    items = items_container.get("item", []) if isinstance(items_container, dict) else []
+    if isinstance(items, dict):
+        items = [items]
+    return {"ok": True, "items": [item for item in items if isinstance(item, dict)]}
+
+
+def forecast_datetime(item: dict[str, Any]) -> datetime | None:
+    raw_date = str(item.get("fcstDate") or "")
+    raw_time = str(item.get("fcstTime") or "")
+    if len(raw_date) != 8 or len(raw_time) < 4:
+        return None
+    try:
+        return datetime.strptime(f"{raw_date}{raw_time[:4]}", "%Y%m%d%H%M")
+    except ValueError:
+        return None
+
+
+def forecast_precip_text(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text and text != "강수없음" else "-"
+
+
+def forecast_sky_text(value: Any, pty: Any) -> str:
+    pty_text = str(pty or "0")
+    if pty_text in {"1", "4", "5"}:
+        return "비"
+    if pty_text in {"2", "6"}:
+        return "비/눈"
+    if pty_text in {"3", "7"}:
+        return "눈"
+    sky_text = str(value or "")
+    return {"1": "맑음", "3": "구름많음", "4": "흐림"}.get(sky_text, "-")
+
+
+@st.cache_data(ttl=WEATHER_REFRESH_SECONDS, show_spinner=False)
+def fetch_jeju_vilage_forecast(service_key: str) -> dict[str, Any]:
+    now_kst = datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+    base = forecast_base_datetime(now_kst)
+    try:
+        response = requests.get(
+            KMA_VILAGE_FORECAST_API_URL,
+            params=vilage_forecast_params(service_key, base),
+            timeout=8,
+        )
+    except requests.Timeout:
+        return {
+            "ok": False,
+            "error_code": "TIMEOUT",
+            "error_message": "기상청 단기예보 API 응답 시간이 초과되었습니다.",
+        }
+    except requests.RequestException:
+        return {
+            "ok": False,
+            "error_code": "NETWORK",
+            "error_message": "기상청 단기예보 API에 연결하지 못했습니다.",
+        }
+
+    parsed = parse_vilage_forecast_response(response)
+    if not parsed.get("ok"):
+        return parsed
+
+    grouped: dict[datetime, dict[str, Any]] = {}
+    for item in parsed["items"]:
+        when = forecast_datetime(item)
+        if when is None or when < now_kst:
+            continue
+        category = str(item.get("category") or "")
+        if category not in {"TMP", "PCP", "SNO", "SKY", "PTY"}:
+            continue
+        grouped.setdefault(when, {})[category] = item.get("fcstValue")
+
+    rows = [
+        {"time": when, **values}
+        for when, values in sorted(grouped.items(), key=lambda pair: pair[0])
+        if "TMP" in values or "PCP" in values or "SNO" in values
+    ]
+    return {
+        "ok": bool(rows),
+        "items": rows[:WEATHER_FORECAST_HOURS],
+        "base_time": base.isoformat(timespec="minutes"),
+        "error_code": "NO_DATA" if not rows else "",
+        "error_message": "표시할 미래 단기예보가 없습니다." if not rows else "",
+    }
+
+
 def asos_error_detail(result: dict[str, Any]) -> str:
     code = str(result.get("error_code", "UNKNOWN"))
     message = str(result.get("error_message", "")).strip()
@@ -2820,6 +3088,46 @@ def render_asos_unavailable(message: str, detail: str) -> None:
     )
 
 
+def forecast_table_html(forecast: dict[str, Any]) -> str:
+    if not forecast.get("ok"):
+        return ""
+    rows = []
+    for item in forecast.get("items", [])[:WEATHER_FORECAST_HOURS]:
+        when = item.get("time")
+        if not isinstance(when, datetime):
+            continue
+        rows.append(
+            clean_html(
+                f"""
+                <div class="weather-td">{escape(when.strftime('%m/%d %H시'))}</div>
+                <div class="weather-td">{escape(str(item.get('TMP', '-')))}°</div>
+                <div class="weather-td">{escape(forecast_precip_text(item.get('PCP')))}</div>
+                <div class="weather-td">{escape(forecast_sky_text(item.get('SKY'), item.get('PTY')))}</div>
+                """
+            )
+        )
+    if not rows:
+        return ""
+    base = str(forecast.get("base_time") or "")
+    base_text = ""
+    try:
+        base_text = datetime.fromisoformat(base).strftime("%m/%d %H시")
+    except ValueError:
+        base_text = base
+    return clean_html(
+        f"""
+        <div class="weather-table forecast-table">
+            <div class="weather-th">예보시간</div>
+            <div class="weather-th">기온</div>
+            <div class="weather-th">강수</div>
+            <div class="weather-th">하늘</div>
+            {''.join(rows)}
+        </div>
+        <div class="weather-source">기상청 단기예보 · 제주 격자 {KMA_FORECAST_NX},{KMA_FORECAST_NY} · 발표 {escape(base_text)}</div>
+        """
+    )
+
+
 def render_weather_panel() -> None:
     service_key = kma_asos_service_key()
     if not service_key:
@@ -2830,11 +3138,14 @@ def render_weather_panel() -> None:
         return
 
     weather = fetch_jeju_asos_hourly(service_key)
+    forecast = fetch_jeju_vilage_forecast(service_key)
     if not weather.get("ok"):
         render_asos_unavailable(
             "ASOS 관측자료 대기 중",
             asos_error_detail(weather),
         )
+        if forecast.get("ok"):
+            render_html(f'<div class="weather-card"><div class="weather-kicker">미래 단기예보</div>{forecast_table_html(forecast)}</div>')
         return
 
     observations = weather["items"]
@@ -2882,6 +3193,7 @@ def render_weather_panel() -> None:
         )
         for item in reversed(observations[-WEATHER_WINDOW_HOURS:])
     )
+    forecast_html = forecast_table_html(forecast)
 
     render_html(
         f"""
@@ -2917,6 +3229,7 @@ def render_weather_panel() -> None:
                 {row_html}
             </div>
             <div class="weather-source">기상청 ASOS 시간자료 · {escape(source_label)} 기준 {WEATHER_WINDOW_HOURS}개 시간 표시 · 15분 캐시</div>
+            {forecast_html}
         </div>
         """
     )
@@ -3667,6 +3980,22 @@ def add_map_chrome(fmap: folium.Map) -> None:
             .pgis-map-lock-control {
                 display: none;
             }
+            .pgis-hover-guide {
+                position: absolute;
+                left: 56px;
+                top: 10px;
+                z-index: 500;
+                padding: 7px 10px;
+                border-radius: 999px;
+                color: #0f172a;
+                background: rgba(255, 255, 255, .94);
+                border: 1px solid rgba(148, 163, 184, .45);
+                box-shadow: 0 8px 22px rgba(15, 23, 42, .16);
+                font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                font-size: 11px;
+                font-weight: 900;
+                pointer-events: none;
+            }
             .pgis-map-lock-control button {
                 appearance: none;
                 border: 1px solid rgba(148, 163, 184, .55);
@@ -3695,8 +4024,15 @@ def add_map_chrome(fmap: folium.Map) -> None:
                     transform: scale(.88);
                     transform-origin: bottom left;
                 }
+                .pgis-hover-guide {
+                    left: 10px;
+                    top: 52px;
+                    max-width: calc(100% - 20px);
+                    white-space: normal;
+                }
             }
             </style>
+            <div class="pgis-hover-guide">도로 위에 마우스를 올리면 도로명이 표시됩니다.</div>
             """
         )
     )
@@ -4467,6 +4803,29 @@ def render_mobile_header() -> None:
     )
 
 
+def render_mobile_theme_toggle() -> None:
+    with st.container(key="mobile_theme_toggle"):
+        light_col, dark_col = st.columns(2, gap="small")
+        with light_col:
+            st.button(
+                "☀️",
+                key="theme_light_mobile",
+                type="primary" if st.session_state.theme_mode == "light" else "secondary",
+                use_container_width=True,
+                on_click=set_theme_mode,
+                args=("light",),
+            )
+        with dark_col:
+            st.button(
+                "🌙",
+                key="theme_dark_mobile",
+                type="primary" if st.session_state.theme_mode == "dark" else "secondary",
+                use_container_width=True,
+                on_click=set_theme_mode,
+                args=("dark",),
+            )
+
+
 def main() -> None:
     st.set_page_config(
         page_title="제주 겨울도로 PGIS",
@@ -4480,6 +4839,7 @@ def main() -> None:
 
     reports = filtered_reports()
     render_sidebar(reports)
+    render_mobile_theme_toggle()
     render_mobile_header()
 
     main_col, panel_col = st.columns([0.74, 0.26], gap="medium")
@@ -4505,11 +4865,12 @@ def main() -> None:
         render_timeline(reports, docked=True)
 
     with panel_col:
-        render_weather_panel()
         selected = current_report()
         if selected:
             render_report_detail(selected)
+            render_weather_panel()
         else:
+            render_weather_panel()
             render_idle_panel(reports)
 
 
